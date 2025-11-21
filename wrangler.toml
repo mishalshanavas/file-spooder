@@ -1,0 +1,14 @@
+name = "file-spooder"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+routes = [
+  { pattern = "files.mishalshanavas.in/*", zone_name = "mishalshanavas.in" }
+]
+
+[vars]
+
+# Bind R2 bucket
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "public-files"
