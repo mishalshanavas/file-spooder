@@ -199,6 +199,100 @@ export default {
         });
       }
 
+      if (action === "copyFile") {
+        const sourceKey = data.key;
+        const destFolder = data.destFolder || "";
+        if (!sourceKey) return new Response("No source key", { status: 400 });
+        
+        const obj = await env.R2_BUCKET.get(sourceKey);
+        if (!obj) return new Response("Source not found", { status: 404 });
+        
+        const fileName = sourceKey.split("/").pop();
+        const destKey = destFolder + fileName;
+        
+        const arrayBuffer = await obj.arrayBuffer();
+        const ct = obj.httpMetadata?.contentType || "application/octet-stream";
+        
+        await env.R2_BUCKET.put(destKey, arrayBuffer, {
+          httpMetadata: { contentType: ct }
+        });
+        
+        return new Response(JSON.stringify({ ok: true, destKey }), {
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      if (action === "moveFile") {
+        const sourceKey = data.key;
+        const destFolder = data.destFolder || "";
+        if (!sourceKey) return new Response("No source key", { status: 400 });
+        
+        const obj = await env.R2_BUCKET.get(sourceKey);
+        if (!obj) return new Response("Source not found", { status: 404 });
+        
+        const fileName = sourceKey.split("/").pop();
+        const destKey = destFolder + fileName;
+        
+        const arrayBuffer = await obj.arrayBuffer();
+        const ct = obj.httpMetadata?.contentType || "application/octet-stream";
+        
+        await env.R2_BUCKET.put(destKey, arrayBuffer, {
+          httpMetadata: { contentType: ct }
+        });
+        await env.R2_BUCKET.delete(sourceKey);
+        
+        return new Response(JSON.stringify({ ok: true, destKey }), {
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      if (action === "listFolders") {
+        // List all folders in the bucket for folder selection
+        const allList = await env.R2_BUCKET.list({ delimiter: "/" });
+        const folders = [{path: "", display: "/ (Root)"}];
+        
+        async function listRecursive(prefix) {
+          const list = await env.R2_BUCKET.list({ prefix, delimiter: "/" });
+          const prefixes = list.commonPrefixes || list.prefixes || [];
+          
+          for (const p of prefixes) {
+            folders.push({path: p, display: "/" + p});
+            await listRecursive(p);
+          }
+        }
+        
+        const rootPrefixes = allList.commonPrefixes || allList.prefixes || [];
+        for (const p of rootPrefixes) {
+          folders.push({path: p, display: "/" + p});
+          await listRecursive(p);
+        }
+        
+        return new Response(JSON.stringify({ ok: true, folders }), {
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      if (action === "getStorageUsage") {
+        // Calculate total storage used in the bucket
+        let totalSize = 0;
+        let cursor = undefined;
+        
+        do {
+          const list = await env.R2_BUCKET.list({ cursor });
+          const objects = list.objects || [];
+          
+          for (const obj of objects) {
+            totalSize += obj.size || 0;
+          }
+          
+          cursor = list.truncated ? list.cursor : undefined;
+        } while (cursor);
+        
+        return new Response(JSON.stringify({ ok: true, totalSize }), {
+          headers: { "content-type": "application/json" }
+        });
+      }
+
       return new Response("Unknown action", { status: 400 });
     }
 
@@ -278,6 +372,25 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.breadcrumb a {
+  color: var(--accent);
+  text-decoration: none;
+  transition: opacity 0.2s;
+}
+
+.breadcrumb a:hover {
+  opacity: 0.7;
+  text-decoration: underline;
+}
+
+.breadcrumb-sep {
+  color: var(--muted);
+  opacity: 0.5;
 }
 
 .controls { 
@@ -317,6 +430,23 @@ body {
   opacity: 0.5;
 }
 
+.sort-select {
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  outline: none;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.sort-select:focus {
+  border-color: var(--accent);
+}
+
 .btn { 
   background: var(--card); 
   color: var(--text); 
@@ -334,6 +464,86 @@ body {
 .btn:hover { 
   background: var(--hover); 
   border-color: var(--accent);
+}
+
+/* Storage Meter */
+.storage-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 200px;
+  padding: 8px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.storage-text {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.storage-bar {
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+}
+
+.storage-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), #5ab9ea);
+  border-radius: 3px;
+  transition: width 0.5s ease-out;
+}
+
+/* Bulk actions */
+.bulk-actions {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--card);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.bulk-actions.active {
+  display: flex;
+}
+
+.bulk-info {
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 600;
+  flex: 1;
+}
+
+.bulk-btn {
+  background: var(--card);
+  color: var(--text);
+  padding: 0 12px;
+  height: 32px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.bulk-btn:hover {
+  background: var(--hover);
+  border-color: var(--accent);
+}
+
+.bulk-btn.danger:hover {
+  border-color: #ff4d4d;
+  color: #ff4d4d;
 }
 
 /* Progress */
@@ -440,6 +650,19 @@ body {
 .icon {
   flex-shrink: 0;
   opacity: 0.7;
+}
+
+.file-checkbox {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+
+.item.selected {
+  background: rgba(58, 159, 217, 0.1);
+  border-left: 3px solid var(--accent);
 }
 
 .thumb {
@@ -649,6 +872,50 @@ body {
   opacity: 0.9;
 }
 
+/* Media Player Modal */
+.media-modal {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  max-width: 90vw;
+  max-height: 90vh;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  animation: scaleIn 0.2s ease-out;
+}
+
+.media-modal video,
+.media-modal audio {
+  max-width: 100%;
+  max-height: 70vh;
+  border-radius: 8px;
+  background: #000;
+}
+
+.media-modal-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.media-modal-close {
+  margin-top: 16px;
+  width: 100%;
+  padding: 10px;
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.media-modal-close:hover {
+  background: var(--primary-hover);
+}
+
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -710,10 +977,34 @@ body {
         </svg>
         Public Files
       </div>
-      <div class="breadcrumb">/${prefix}</div>
+      <div class="breadcrumb">`;
+      
+      // Generate clickable breadcrumb
+      html += `<a href="/">/</a>`;
+      if (prefix) {
+        const parts = prefix.split('/').filter(p => p);
+        let accumulated = '';
+        parts.forEach((part, i) => {
+          accumulated += part + '/';
+          html += `<span class="breadcrumb-sep">/</span>`;
+          if (i < parts.length - 1) {
+            html += `<a href="/${accumulated}">${part}</a>`;
+          } else {
+            html += `<span>${part}</span>`;
+          }
+        });
+      }
+      
+      html += `</div>
     </div>
 
     <div class="controls">
+      <div class="storage-meter" id="storageMeter" style="display: none;">
+        <div class="storage-text" id="storageText">Loading...</div>
+        <div class="storage-bar">
+          <div class="storage-bar-fill" id="storageFill" style="width: 0%"></div>
+        </div>
+      </div>
       <div class="search-box">
         <input id="q" placeholder="Search..." />
         <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none">
@@ -721,10 +1012,25 @@ body {
           <path d="M21 21l-4.35-4.35" stroke="currentColor" stroke-width="2"/>
         </svg>
       </div>
+      <select id="sortSelect" class="sort-select">
+        <option value="name-asc">Name (A-Z)</option>
+        <option value="name-desc">Name (Z-A)</option>
+        <option value="size-asc">Size (Small-Large)</option>
+        <option value="size-desc">Size (Large-Small)</option>
+        <option value="date-asc">Date (Old-New)</option>
+        <option value="date-desc">Date (New-Old)</option>
+      </select>
       <button id="uploadBtn" class="btn">Upload</button>
       <button id="createLinkBtn" class="btn">Create Link</button>
       <button id="createFolderBtn" class="btn">New Folder</button>
     </div>
+  </div>
+
+  <div id="bulkActions" class="bulk-actions">
+    <div class="bulk-info"><span id="selectedCount">0</span> selected</div>
+    <button id="selectAllBtn" class="bulk-btn">Select All</button>
+    <button id="deselectAllBtn" class="bulk-btn">Deselect All</button>
+    <button id="bulkDeleteBtn" class="bulk-btn danger">Delete Selected</button>
   </div>
 
   <div id="dropOverlay" class="drop-overlay">
@@ -830,6 +1136,10 @@ body {
         const viewUrl = "/" + obj.key;
         const downloadUrl = "/" + obj.key + "?download=1";
         const sizeText = fmtSize(obj.size);
+        
+        // Format uploaded date
+        const uploadedDate = obj.uploaded ? new Date(obj.uploaded).toLocaleDateString() : "";
+        const uploadedTimestamp = obj.uploaded ? obj.uploaded.getTime() : 0;
 
         const iconHtml = isLink 
           ? `<svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none">
@@ -838,15 +1148,16 @@ body {
             </svg>`
           : getFileIcon(name, toHref(viewUrl));
 
-        html += `<div class="item file" data-name="${name.toLowerCase()}">
+        html += `<div class="item file" data-name="${name.toLowerCase()}" data-key="${obj.key}" data-uploaded="${uploadedTimestamp}">
   <div class="left">
+    <input type="checkbox" class="file-checkbox" data-key="${obj.key}" />
     ${iconHtml}
     <a class="name" href="${isLink ? toHref(viewUrl) : toHref(downloadUrl)}">${name}</a>
   </div>
   <div class="right">
-    <div class="meta">${sizeText}</div>
+    <div class="meta">${sizeText}${uploadedDate ? ` • ${uploadedDate}` : ''}</div>
     <div class="actions">
-      <button class="icon-btn view-btn" data-href="${toHref(viewUrl)}" title="View">
+      <button class="icon-btn view-btn" data-href="${toHref(viewUrl)}" data-key="${obj.key}" title="View">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
           <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" stroke="currentColor" stroke-width="1.5"/>
           <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.5"/>
@@ -864,6 +1175,17 @@ body {
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
           <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" stroke-width="1.5"/>
           <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="1.5"/>
+        </svg>
+      </button>
+      <button class="icon-btn copy-btn" data-key="${obj.key}" title="Copy">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+          <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="1.5"/>
+        </svg>
+      </button>
+      <button class="icon-btn move-btn" data-key="${obj.key}" title="Move">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+          <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" stroke-width="1.5"/>
         </svg>
       </button>
       <button class="icon-btn delete-btn" data-key="${obj.key}" title="Delete">
@@ -888,6 +1210,49 @@ body {
 </div>
 
 <script>
+// Fetch and display storage usage
+async function loadStorageUsage() {
+  try {
+    const res = await fetch(window.location.pathname + "?action=getStorageUsage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" }
+    });
+    
+    if (res.ok) {
+      const data = await res.json();
+      const totalSize = data.totalSize || 0;
+      
+      // Format size for display
+      const formatSize = (bytes) => {
+        if (bytes === 0) return "0 B";
+        const units = ["B", "KB", "MB", "GB", "TB"];
+        let i = 0;
+        let v = bytes;
+        while (v >= 1024 && i < units.length - 1) {
+          v /= 1024;
+          i++;
+        }
+        return `${(v).toFixed(2)} ${units[i]}`;
+      };
+      
+      const sizeStr = formatSize(totalSize);
+      
+      // Assume a max of 10GB for visualization (adjust as needed)
+      const maxSize = 10 * 1024 * 1024 * 1024; // 10GB
+      const percentage = Math.min((totalSize / maxSize) * 100, 100);
+      
+      document.getElementById('storageText').textContent = `Storage: ${sizeStr}`;
+      document.getElementById('storageFill').style.width = percentage + '%';
+      document.getElementById('storageMeter').style.display = 'flex';
+    }
+  } catch (err) {
+    console.error('Failed to load storage usage:', err);
+  }
+}
+
+// Load storage on page load
+loadStorageUsage();
+
 // Toast notification helper
 function showToast(message, type = 'info') {
   const toast = document.createElement('div');
@@ -1047,6 +1412,93 @@ function askPassword(callback) {
   });
 }
 
+// Bulk selection
+const bulkActions = document.getElementById("bulkActions");
+const selectedCount = document.getElementById("selectedCount");
+const selectAllBtn = document.getElementById("selectAllBtn");
+const deselectAllBtn = document.getElementById("deselectAllBtn");
+const bulkDeleteBtn = document.getElementById("bulkDeleteBtn");
+const checkboxes = document.querySelectorAll(".file-checkbox");
+
+function updateBulkUI() {
+  const checked = Array.from(checkboxes).filter(cb => cb.checked);
+  selectedCount.textContent = checked.length;
+  
+  if (checked.length > 0) {
+    bulkActions.classList.add("active");
+  } else {
+    bulkActions.classList.remove("active");
+  }
+  
+  // Update item styling
+  checkboxes.forEach(cb => {
+    const item = cb.closest(".item");
+    if (cb.checked) {
+      item.classList.add("selected");
+    } else {
+      item.classList.remove("selected");
+    }
+  });
+}
+
+checkboxes.forEach(cb => {
+  cb.addEventListener("change", updateBulkUI);
+});
+
+selectAllBtn.addEventListener("click", () => {
+  checkboxes.forEach(cb => cb.checked = true);
+  updateBulkUI();
+});
+
+deselectAllBtn.addEventListener("click", () => {
+  checkboxes.forEach(cb => cb.checked = false);
+  updateBulkUI();
+});
+
+bulkDeleteBtn.addEventListener("click", () => {
+  const checked = Array.from(checkboxes).filter(cb => cb.checked);
+  const count = checked.length;
+  
+  if (count === 0) return;
+  
+  showConfirm("Delete Files", `Delete ${count} file(s)? This cannot be undone.`, () => {
+    askPassword(async (password) => {
+      let success = 0;
+      let failed = 0;
+      
+      for (const cb of checked) {
+        const key = cb.dataset.key;
+        try {
+          const res = await fetch(window.location.pathname + "?action=delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-password": password },
+            body: JSON.stringify({ key })
+          });
+          
+          if (res.status === 200) {
+            success++;
+          } else if (res.status === 401) {
+            showToast("Incorrect password", "error");
+            return;
+          } else {
+            failed++;
+          }
+        } catch (err) {
+          failed++;
+        }
+      }
+      
+      if (failed === 0) {
+        showToast(`Deleted ${success} file(s) successfully`, "success");
+      } else {
+        showToast(`Deleted ${success}, failed ${failed}`, "error");
+      }
+      
+      setTimeout(() => location.reload(), 1000);
+    });
+  });
+});
+
 // Search
 const q = document.getElementById("q");
 const items = document.querySelectorAll(".item");
@@ -1056,6 +1508,48 @@ q.addEventListener("input", () => {
     const ok = !v || (el.dataset.name || "").includes(v);
     el.style.display = ok ? "flex" : "none";
   });
+});
+
+// Sort files
+const sortSelect = document.getElementById("sortSelect");
+const listContainer = document.getElementById("list");
+
+sortSelect.addEventListener("change", () => {
+  const [sortBy, order] = sortSelect.value.split("-");
+  const fileItems = Array.from(document.querySelectorAll(".item.file"));
+  const folderItems = Array.from(document.querySelectorAll(".item.folder"));
+  
+  fileItems.sort((a, b) => {
+    let valA, valB;
+    
+    if (sortBy === "name") {
+      valA = a.dataset.name || "";
+      valB = b.dataset.name || "";
+      return order === "asc" ? valA.localeCompare(valB) : valB.localeCompare(valA);
+    } else if (sortBy === "size") {
+      valA = parseInt(a.querySelector(".meta")?.textContent.replace(/[^0-9]/g, "") || "0");
+      valB = parseInt(b.querySelector(".meta")?.textContent.replace(/[^0-9]/g, "") || "0");
+      return order === "asc" ? valA - valB : valB - valA;
+    } else if (sortBy === "date") {
+      valA = parseInt(a.dataset.uploaded || "0");
+      valB = parseInt(b.dataset.uploaded || "0");
+      return order === "asc" ? valA - valB : valB - valA;
+    }
+    return 0;
+  });
+  
+  // Clear and re-append in sorted order
+  listContainer.innerHTML = "";
+  folderItems.forEach(item => listContainer.appendChild(item));
+  fileItems.forEach(item => listContainer.appendChild(item));
+  
+  // Check if empty
+  if (folderItems.length === 0 && fileItems.length === 0) {
+    listContainer.innerHTML = `<div class="empty-state">
+      <div class="empty-state-icon">📁</div>
+      <div>This folder is empty</div>
+    </div>`;
+  }
 });
 
 // Create Link
@@ -1136,49 +1630,74 @@ const progressText = document.getElementById("progressText");
 uploadBtn.addEventListener("click", () => {
   const fi = document.createElement("input");
   fi.type = "file";
+  fi.multiple = true; // Allow multiple file selection
   fi.onchange = () => {
-    if (!fi.files || !fi.files[0]) return;
-    const file = fi.files[0];
+    if (!fi.files || fi.files.length === 0) return;
+    const files = Array.from(fi.files);
     
     askPassword((password) => {
-      const xhr = new XMLHttpRequest();
-      const targetUrl = window.location.pathname + "?upload=1";
-      xhr.open("POST", targetUrl, true);
-      xhr.setRequestHeader("x-password", password);
+      let completed = 0;
+      let failed = 0;
+      const total = files.length;
       
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) {
-          const pct = Math.round((e.loaded / e.total) * 100);
-          progressWrap.style.display = "flex";
-          progressBar.style.width = pct + "%";
-          progressText.textContent = pct + "%";
-        }
-      };
+      progressWrap.style.display = "flex";
+      progressBar.style.width = "0%";
+      progressText.textContent = `0/${total}`;
       
-      xhr.onload = () => {
-        if (xhr.status === 200) {
-          progressBar.style.width = "100%";
-          progressText.textContent = "100%";
+      async function uploadNext(index) {
+        if (index >= files.length) {
+          // All done
           setTimeout(() => {
             progressWrap.style.display = "none";
             progressBar.style.width = "0%";
             progressText.textContent = "0%";
-            location.reload();
+            
+            if (failed === 0) {
+              showToast(`Uploaded ${completed} file(s) successfully`, "success");
+            } else {
+              showToast(`Uploaded ${completed}, failed ${failed}`, "error");
+            }
+            
+            setTimeout(() => location.reload(), 1000);
           }, 700);
-        } else if (xhr.status === 401) {
-          showToast("Incorrect password", "error");
-          progressWrap.style.display = "none";
-          progressBar.style.width = "0%";
-        } else {
-          showToast("Upload failed", "error");
-          progressWrap.style.display = "none";
-          progressBar.style.width = "0%";
+          return;
         }
-      };
+        
+        const file = files[index];
+        const xhr = new XMLHttpRequest();
+        const targetUrl = window.location.pathname + "?upload=1";
+        xhr.open("POST", targetUrl, true);
+        xhr.setRequestHeader("x-password", password);
+        
+        xhr.onload = () => {
+          if (xhr.status === 200) {
+            completed++;
+          } else if (xhr.status === 401) {
+            showToast("Incorrect password", "error");
+            progressWrap.style.display = "none";
+            return;
+          } else {
+            failed++;
+          }
+          
+          const progress = Math.round(((completed + failed) / total) * 100);
+          progressBar.style.width = progress + "%";
+          progressText.textContent = `${completed + failed}/${total}`;
+          
+          uploadNext(index + 1);
+        };
+        
+        xhr.onerror = () => {
+          failed++;
+          uploadNext(index + 1);
+        };
+        
+        const fd = new FormData();
+        fd.append("file", file, file.name);
+        xhr.send(fd);
+      }
       
-      const fd = new FormData();
-      fd.append("file", file, file.name);
-      xhr.send(fd);
+      uploadNext(0);
     });
   };
   fi.click();
@@ -1189,6 +1708,21 @@ const dropOverlay = document.getElementById("dropOverlay");
 let dragCounter = 0;
 
 function uploadFileWithPassword(file) {
+  // Check file size limit (100MB)
+  const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB in bytes
+  
+  if (file.size > MAX_FILE_SIZE) {
+    const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+    const confirmed = confirm(
+      `Warning: The file "${file.name}" is ${fileSizeMB} MB, which exceeds the recommended limit of 100 MB.\n\n` +
+      `Large files may take longer to upload and could fail. Do you want to continue?`
+    );
+    
+    if (!confirmed) {
+      return; // Cancel upload
+    }
+  }
+  
   askPassword((password) => {
     const xhr = new XMLHttpRequest();
     const targetUrl = window.location.pathname + "?upload=1";
@@ -1264,7 +1798,68 @@ document.addEventListener("drop", (e) => {
 document.querySelectorAll(".view-btn").forEach(btn => {
   btn.addEventListener("click", () => {
     const href = btn.getAttribute("data-href");
-    window.open(href, "_blank");
+    const fileName = btn.getAttribute("data-key");
+    
+    // Detect media files
+    const videoExtensions = ['.mp4', '.webm', '.ogg', '.mov', '.avi', '.mkv'];
+    const audioExtensions = ['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac'];
+    
+    const isVideo = videoExtensions.some(ext => fileName.toLowerCase().endsWith(ext));
+    const isAudio = audioExtensions.some(ext => fileName.toLowerCase().endsWith(ext));
+    
+    if (isVideo || isAudio) {
+      // Create media player modal
+      const overlay = document.createElement("div");
+      overlay.className = "modal-overlay";
+      overlay.style.display = "flex";
+      overlay.style.justifyContent = "center";
+      overlay.style.alignItems = "center";
+      overlay.style.position = "fixed";
+      overlay.style.top = "0";
+      overlay.style.left = "0";
+      overlay.style.width = "100%";
+      overlay.style.height = "100%";
+      overlay.style.background = "rgba(0,0,0,0.8)";
+      overlay.style.zIndex = "1000";
+      overlay.style.animation = "fadeIn 0.2s ease-out";
+      
+      const modal = document.createElement("div");
+      modal.className = "media-modal";
+      
+      const title = document.createElement("div");
+      title.className = "media-modal-title";
+      title.textContent = fileName.split('/').pop();
+      
+      const mediaElement = isVideo ? document.createElement("video") : document.createElement("audio");
+      mediaElement.src = href;
+      mediaElement.controls = true;
+      mediaElement.autoplay = true;
+      
+      const closeBtn = document.createElement("button");
+      closeBtn.className = "media-modal-close";
+      closeBtn.textContent = "Close";
+      closeBtn.onclick = () => {
+        mediaElement.pause();
+        document.body.removeChild(overlay);
+      };
+      
+      modal.appendChild(title);
+      modal.appendChild(mediaElement);
+      modal.appendChild(closeBtn);
+      overlay.appendChild(modal);
+      
+      overlay.onclick = (e) => {
+        if (e.target === overlay) {
+          mediaElement.pause();
+          document.body.removeChild(overlay);
+        }
+      };
+      
+      document.body.appendChild(overlay);
+    } else {
+      // Open non-media files in new tab
+      window.open(href, "_blank");
+    }
   });
 });
 
@@ -1322,6 +1917,224 @@ document.querySelectorAll(".edit-link-btn").forEach(btn => {
           } catch (err) {
             showToast("Error: " + err.message, "error");
           }
+        });
+      } catch (err) {
+        showToast("Error: " + err.message, "error");
+      }
+    });
+  });
+});
+
+// Copy file
+document.querySelectorAll(".copy-btn").forEach(btn => {
+  btn.addEventListener("click", async () => {
+    const key = btn.getAttribute("data-key");
+    
+    askPassword(async (password) => {
+      try {
+        // Get folder list
+        const listRes = await fetch(window.location.pathname + "?action=listFolders", {
+          method: "POST",
+          headers: { 
+            "Content-Type": "application/json",
+            "x-password": password
+          },
+          body: JSON.stringify({})
+        });
+        
+        if (listRes.status === 401) {
+          showToast("Incorrect password", "error");
+          return;
+        }
+        
+        if (!listRes.ok) {
+          showToast("Failed to list folders", "error");
+          return;
+        }
+        
+        const listData = await listRes.json();
+        const folders = listData.folders || [];
+        
+        // Show folder selection modal
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        
+        const modal = document.createElement('div');
+        modal.className = 'modal';
+        
+        const titleEl = document.createElement('div');
+        titleEl.className = 'modal-title';
+        titleEl.textContent = "Copy to Folder";
+        modal.appendChild(titleEl);
+        
+        const body = document.createElement('div');
+        body.className = 'modal-body';
+        
+        const selectEl = document.createElement('select');
+        selectEl.className = 'modal-input';
+        folders.forEach(folder => {
+          const opt = document.createElement('option');
+          opt.value = folder.path;
+          opt.textContent = folder.display;
+          selectEl.appendChild(opt);
+        });
+        body.appendChild(selectEl);
+        modal.appendChild(body);
+        
+        const buttons = document.createElement('div');
+        buttons.className = 'modal-buttons';
+        
+        const cancelBtn = document.createElement('button');
+        cancelBtn.className = 'modal-btn';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.onclick = () => overlay.remove();
+        
+        const confirmBtn = document.createElement('button');
+        confirmBtn.className = 'modal-btn primary';
+        confirmBtn.textContent = 'Copy';
+        confirmBtn.onclick = async () => {
+          const destFolder = selectEl.value;
+          overlay.remove();
+          
+          try {
+            const res = await fetch(window.location.pathname + "?action=copyFile", {
+              method: "POST",
+              headers: { 
+                "Content-Type": "application/json",
+                "x-password": password
+              },
+              body: JSON.stringify({ key, destFolder })
+            });
+            
+            if (res.status === 200) {
+              showToast("File copied successfully", "success");
+              setTimeout(() => location.reload(), 500);
+            } else {
+              showToast("Failed to copy: " + (await res.text()), "error");
+            }
+          } catch (err) {
+            showToast("Copy error: " + err.message, "error");
+          }
+        };
+        
+        buttons.appendChild(cancelBtn);
+        buttons.appendChild(confirmBtn);
+        modal.appendChild(buttons);
+        
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+        
+        overlay.addEventListener('click', (e) => {
+          if (e.target === overlay) cancelBtn.click();
+        });
+      } catch (err) {
+        showToast("Error: " + err.message, "error");
+      }
+    });
+  });
+});
+
+// Move file
+document.querySelectorAll(".move-btn").forEach(btn => {
+  btn.addEventListener("click", async () => {
+    const key = btn.getAttribute("data-key");
+    
+    askPassword(async (password) => {
+      try {
+        // Get folder list
+        const listRes = await fetch(window.location.pathname + "?action=listFolders", {
+          method: "POST",
+          headers: { 
+            "Content-Type": "application/json",
+            "x-password": password
+          },
+          body: JSON.stringify({})
+        });
+        
+        if (listRes.status === 401) {
+          showToast("Incorrect password", "error");
+          return;
+        }
+        
+        if (!listRes.ok) {
+          showToast("Failed to list folders", "error");
+          return;
+        }
+        
+        const listData = await listRes.json();
+        const folders = listData.folders || [];
+        
+        // Show folder selection modal
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        
+        const modal = document.createElement('div');
+        modal.className = 'modal';
+        
+        const titleEl = document.createElement('div');
+        titleEl.className = 'modal-title';
+        titleEl.textContent = "Move to Folder";
+        modal.appendChild(titleEl);
+        
+        const body = document.createElement('div');
+        body.className = 'modal-body';
+        
+        const selectEl = document.createElement('select');
+        selectEl.className = 'modal-input';
+        folders.forEach(folder => {
+          const opt = document.createElement('option');
+          opt.value = folder.path;
+          opt.textContent = folder.display;
+          selectEl.appendChild(opt);
+        });
+        body.appendChild(selectEl);
+        modal.appendChild(body);
+        
+        const buttons = document.createElement('div');
+        buttons.className = 'modal-buttons';
+        
+        const cancelBtn = document.createElement('button');
+        cancelBtn.className = 'modal-btn';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.onclick = () => overlay.remove();
+        
+        const confirmBtn = document.createElement('button');
+        confirmBtn.className = 'modal-btn primary';
+        confirmBtn.textContent = 'Move';
+        confirmBtn.onclick = async () => {
+          const destFolder = selectEl.value;
+          overlay.remove();
+          
+          try {
+            const res = await fetch(window.location.pathname + "?action=moveFile", {
+              method: "POST",
+              headers: { 
+                "Content-Type": "application/json",
+                "x-password": password
+              },
+              body: JSON.stringify({ key, destFolder })
+            });
+            
+            if (res.status === 200) {
+              showToast("File moved successfully", "success");
+              setTimeout(() => location.reload(), 500);
+            } else {
+              showToast("Failed to move: " + (await res.text()), "error");
+            }
+          } catch (err) {
+            showToast("Move error: " + err.message, "error");
+          }
+        };
+        
+        buttons.appendChild(cancelBtn);
+        buttons.appendChild(confirmBtn);
+        modal.appendChild(buttons);
+        
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+        
+        overlay.addEventListener('click', (e) => {
+          if (e.target === overlay) cancelBtn.click();
         });
       } catch (err) {
         showToast("Error: " + err.message, "error");
@@ -1418,6 +2231,35 @@ document.querySelectorAll(".delete-btn").forEach(btn => {
       });
     });
   });
+});
+
+// Keyboard shortcuts
+document.addEventListener("keydown", (e) => {
+  // Ctrl+U / Cmd+U: Upload
+  if ((e.ctrlKey || e.metaKey) && e.key === "u") {
+    e.preventDefault();
+    document.getElementById("uploadBtn").click();
+  }
+  
+  // F2: Rename selected file (if only one checkbox is checked)
+  if (e.key === "F2") {
+    e.preventDefault();
+    const checked = Array.from(document.querySelectorAll(".file-checkbox")).filter(cb => cb.checked);
+    if (checked.length === 1) {
+      const key = checked[0].dataset.key;
+      const renameBtn = document.querySelector(`.rename-btn[data-key="${key}"]`);
+      if (renameBtn) renameBtn.click();
+    }
+  }
+  
+  // Delete / Backspace: Delete selected files
+  if (e.key === "Delete" || (e.key === "Backspace" && e.metaKey)) {
+    e.preventDefault();
+    const checked = Array.from(document.querySelectorAll(".file-checkbox")).filter(cb => cb.checked);
+    if (checked.length > 0) {
+      document.getElementById("bulkDeleteBtn").click();
+    }
+  }
 });
 </script>
 </body>
