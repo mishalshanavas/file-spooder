@@ -1232,7 +1232,7 @@ async function loadStorageUsage() {
           v /= 1024;
           i++;
         }
-        return `${(v).toFixed(2)} ${units[i]}`;
+        return (v).toFixed(2) + " " + units[i];
       };
       
       const sizeStr = formatSize(totalSize);
@@ -1241,7 +1241,7 @@ async function loadStorageUsage() {
       const maxSize = 10 * 1024 * 1024 * 1024; // 10GB
       const percentage = Math.min((totalSize / maxSize) * 100, 100);
       
-      document.getElementById('storageText').textContent = `Storage: ${sizeStr}`;
+      document.getElementById('storageText').textContent = 'Storage: ' + sizeStr;
       document.getElementById('storageFill').style.width = percentage + '%';
       document.getElementById('storageMeter').style.display = 'flex';
     }
@@ -1461,7 +1461,7 @@ bulkDeleteBtn.addEventListener("click", () => {
   
   if (count === 0) return;
   
-  showConfirm("Delete Files", `Delete ${count} file(s)? This cannot be undone.`, () => {
+  showConfirm("Delete Files", "Delete " + count + " file(s)? This cannot be undone.", () => {
     askPassword(async (password) => {
       let success = 0;
       let failed = 0;
@@ -1489,9 +1489,9 @@ bulkDeleteBtn.addEventListener("click", () => {
       }
       
       if (failed === 0) {
-        showToast(`Deleted ${success} file(s) successfully`, "success");
+        showToast("Deleted " + success + " file(s) successfully", "success");
       } else {
-        showToast(`Deleted ${success}, failed ${failed}`, "error");
+        showToast("Deleted " + success + ", failed " + failed, "error");
       }
       
       setTimeout(() => location.reload(), 1000);
@@ -1545,10 +1545,10 @@ sortSelect.addEventListener("change", () => {
   
   // Check if empty
   if (folderItems.length === 0 && fileItems.length === 0) {
-    listContainer.innerHTML = `<div class="empty-state">
-      <div class="empty-state-icon">📁</div>
-      <div>This folder is empty</div>
-    </div>`;
+    listContainer.innerHTML = '<div class=\"empty-state\">' +
+      '<div class=\"empty-state-icon\">📁</div>' +
+      '<div>This folder is empty</div>' +
+    '</div>';
   }
 });
 
@@ -1612,7 +1612,8 @@ createFolderBtn.addEventListener("click", async () => {
         } else if (res.status === 401) {
           showToast("Incorrect password", "error");
         } else {
-          showToast("Failed to create folder: " + (await res.text()), "error");
+          const errorText = await res.text();
+          showToast("Failed to create folder: " + errorText, "error");
         }
       } catch (err) {
         showToast("Error: " + err.message, "error");
@@ -1642,7 +1643,7 @@ uploadBtn.addEventListener("click", () => {
       
       progressWrap.style.display = "flex";
       progressBar.style.width = "0%";
-      progressText.textContent = `0/${total}`;
+      progressText.textContent = "0/" + total;
       
       async function uploadNext(index) {
         if (index >= files.length) {
@@ -1653,9 +1654,9 @@ uploadBtn.addEventListener("click", () => {
             progressText.textContent = "0%";
             
             if (failed === 0) {
-              showToast(`Uploaded ${completed} file(s) successfully`, "success");
+              showToast("Uploaded " + completed + " file(s) successfully", "success");
             } else {
-              showToast(`Uploaded ${completed}, failed ${failed}`, "error");
+              showToast("Uploaded " + completed + ", failed " + failed, "error");
             }
             
             setTimeout(() => location.reload(), 1000);
@@ -1682,7 +1683,7 @@ uploadBtn.addEventListener("click", () => {
           
           const progress = Math.round(((completed + failed) / total) * 100);
           progressBar.style.width = progress + "%";
-          progressText.textContent = `${completed + failed}/${total}`;
+          progressText.textContent = (completed + failed) + "/" + total;
           
           uploadNext(index + 1);
         };
@@ -1714,8 +1715,8 @@ function uploadFileWithPassword(file) {
   if (file.size > MAX_FILE_SIZE) {
     const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
     const confirmed = confirm(
-      `Warning: The file "${file.name}" is ${fileSizeMB} MB, which exceeds the recommended limit of 100 MB.\n\n` +
-      `Large files may take longer to upload and could fail. Do you want to continue?`
+      \"Warning: The file \\\"\" + file.name + \"\\\" is \" + fileSizeMB + \" MB, which exceeds the recommended limit of 100 MB.\\n\\n\" +
+      \"Large files may take longer to upload and could fail. Do you want to continue?\"
     );
     
     if (!confirmed) {
@@ -2242,12 +2243,12 @@ document.addEventListener("keydown", (e) => {
   }
   
   // F2: Rename selected file (if only one checkbox is checked)
-  if (e.key === "F2") {
+  if (e.key === \"F2\") {
     e.preventDefault();
-    const checked = Array.from(document.querySelectorAll(".file-checkbox")).filter(cb => cb.checked);
+    const checked = Array.from(document.querySelectorAll(\".file-checkbox\")).filter(cb => cb.checked);
     if (checked.length === 1) {
       const key = checked[0].dataset.key;
-      const renameBtn = document.querySelector(`.rename-btn[data-key="${key}"]`);
+      const renameBtn = document.querySelector('.rename-btn[data-key=\"' + key + '\"]');
       if (renameBtn) renameBtn.click();
     }
   }
