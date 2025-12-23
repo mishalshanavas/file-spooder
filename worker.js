@@ -47,8 +47,8 @@ export default {
       const githubBlobRegex = /^https:\/\/github\.com\/([^\/]+)\/([^\/]+)\/blob\/(.+)$/;
       const match = targetUrl.match(githubBlobRegex);
       if (match) {
-        // match[1]=user, match[2]=repo, match[3]=path
-        targetUrl = `https://raw.githubusercontent.com/${match[1]}/${match[2]}/${match[3].replace(/^[^/]+\//, '')}`;
+        // match[1]=user, match[2]=repo, match[3]=branch/path
+        targetUrl = `https://raw.githubusercontent.com/${match[1]}/${match[2]}/${match[3]}`;
       }
 
       // Ensure URL has a protocol
@@ -147,7 +147,7 @@ export default {
         const githubBlobRegex = /^https:\/\/github\.com\/([^\/]+)\/([^\/]+)\/blob\/(.+)$/;
         const match = newUrl.match(githubBlobRegex);
         if (match) {
-          newUrl = `https://raw.githubusercontent.com/${match[1]}/${match[2]}/${match[3].replace(/^[^\/]+\//, '')}`;
+          newUrl = `https://raw.githubusercontent.com/${match[1]}/${match[2]}/${match[3]}`;
         }
 
         // Ensure URL has a protocol
