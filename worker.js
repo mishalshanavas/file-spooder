@@ -328,7 +328,9 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
   font-size: 14px;
   line-height: 1.5;
-  padding: 16px;
+  padding: 8px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .container { 
@@ -339,10 +341,11 @@ body {
 /* Header */
 .header { 
   display: flex; 
-  align-items: center; 
+  align-items: stretch; 
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px; 
-  padding: 12px 16px;
+  padding: 12px;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -351,9 +354,10 @@ body {
 
 .header-left {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  gap: 8px;
   min-width: 0;
+  flex: 1;
 }
 
 .title { 
@@ -395,18 +399,21 @@ body {
 
 .controls { 
   display: flex; 
+  flex-wrap: wrap;
   gap: 8px; 
   align-items: center;
-  flex-shrink: 0;
+  width: 100%;
 }
 
 .search-box {
   position: relative;
+  flex: 1;
+  min-width: 120px;
 }
 
 .search-box input { 
   height: 32px; 
-  width: 200px; 
+  width: 100%; 
   padding: 0 32px 0 10px; 
   border-radius: 6px; 
   background: var(--bg); 
@@ -450,15 +457,20 @@ body {
 .btn { 
   background: var(--card); 
   color: var(--text); 
-  padding: 0 12px; 
-  height: 32px;
+  padding: 0 16px; 
+  height: 38px;
+  min-height: 44px;
   border-radius: 6px; 
   border: 1px solid var(--border); 
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s;
   white-space: nowrap;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  flex: 1;
+  min-width: fit-content;
 }
 
 .btn:hover { 
@@ -471,11 +483,12 @@ body {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  min-width: 200px;
+  width: 100%;
   padding: 8px 12px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 6px;
+  order: -1;
 }
 
 .storage-text {
@@ -626,9 +639,11 @@ body {
   align-items: center; 
   justify-content: space-between; 
   gap: 12px; 
-  padding: 10px 16px;
+  padding: 12px 10px;
   border-bottom: 1px solid var(--border);
   transition: background 0.15s;
+  min-height: 56px;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .item:last-child {
@@ -653,11 +668,14 @@ body {
 }
 
 .file-checkbox {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  min-height: 20px;
   cursor: pointer;
   accent-color: var(--accent);
   flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .item.selected {
@@ -711,21 +729,103 @@ body {
 }
 
 .actions {
+  position: relative;
+}
+
+.menu-btn {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 8px;
+  min-width: 36px;
+  min-height: 36px;
+  border-radius: 6px;
+  color: var(--muted);
   display: flex;
-  gap: 4px;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.menu-btn:hover {
+  background: var(--hover);
+  color: var(--accent);
+}
+
+.menu-btn svg {
+  pointer-events: none;
+}
+
+.dropdown-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  margin-top: 4px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  min-width: 160px;
+  z-index: 1000;
+  display: none;
+  overflow: hidden;
+}
+
+.dropdown-menu.active {
+  display: block;
+  animation: scaleIn 0.15s ease-out;
+}
+
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  color: var(--text);
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  font-size: 13px;
+  transition: background 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.dropdown-item:hover {
+  background: var(--hover);
+}
+
+.dropdown-item svg {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.dropdown-item.danger {
+  color: #ef4444;
+}
+
+.dropdown-item.danger:hover {
+  background: rgba(239, 68, 68, 0.1);
 }
 
 .icon-btn { 
   background: transparent; 
   border: 0; 
   cursor: pointer; 
-  padding: 6px; 
-  border-radius: 4px; 
+  padding: 8px; 
+  min-width: 36px;
+  min-height: 36px;
+  border-radius: 6px; 
   color: var(--muted);
-  display: flex;
+  display: none;
   align-items: center;
   justify-content: center;
   transition: all 0.15s;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 
 .icon-btn:hover { 
@@ -949,20 +1049,103 @@ body {
     align-items: stretch;
   }
   
-  .search-box input {
+  .controls {
+    flex-direction: column;
+  }
+  
+  .btn {
     width: 100%;
   }
   
-  .controls {
-    justify-content: stretch;
+  .sort-select {
+    width: 100%;
+    height: 44px;
+  }
+  
+  .search-box {
+    width: 100%;
+  }
+  
+  .search-box input {
+    height: 44px;
+    font-size: 16px;
+  }
+  
+  .actions {
+    flex-wrap: wrap;
+  }
+  
+  .icon-btn {
+    min-width: 40px;
+    min-height: 40px;
+  }
+  
+  .item {
+    padding: 14px 8px;
+  }
+  
+  .name {
+    font-size: 15px;
   }
   
   .meta {
-    display: none;
+    font-size: 12px;
   }
   
   .modal {
     min-width: 90vw;
+    padding: 16px;
+  }
+  
+  .modal-input {
+    font-size: 16px;
+    height: 44px;
+  }
+  
+  .modal-btn {
+    height: 44px;
+    font-size: 16px;
+  }
+  
+  .bulk-actions {
+    padding: 12px 8px;
+    gap: 8px;
+  }
+  
+  .bulk-btn {
+    font-size: 14px;
+    padding: 10px 14px;
+    height: 44px;
+  }
+}
+
+@media (min-width: 641px) {
+  body {
+    padding: 16px;
+  }
+  
+  .header-left {
+    flex-direction: row;
+    align-items: center;
+  }
+  
+  .controls {
+    width: auto;
+  }
+  
+  .btn {
+    flex: 0;
+  }
+  
+  .search-box {
+    flex: 0;
+    min-width: 200px;
+  }
+  
+  .storage-meter {
+    width: auto;
+    min-width: 200px;
+    order: 0;
   }
 }
 </style>
@@ -1157,42 +1340,18 @@ body {
   <div class="right">
     <div class="meta">${sizeText}${uploadedDate ? ` • ${uploadedDate}` : ''}</div>
     <div class="actions">
-      <button class="icon-btn view-btn" data-href="${toHref(viewUrl)}" data-key="${obj.key}" title="View">
+      <button class="menu-btn" data-key="${obj.key}" data-is-link="${isLink}" data-view-url="${toHref(viewUrl)}" title="Actions">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-          <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" stroke="currentColor" stroke-width="1.5"/>
-          <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.5"/>
+          <circle cx="12" cy="5" r="2" fill="currentColor"/>
+          <circle cx="12" cy="12" r="2" fill="currentColor"/>
+          <circle cx="12" cy="19" r="2" fill="currentColor"/>
         </svg>
       </button>
-      ${isLink ? `<button class="icon-btn edit-link-btn" data-key="${obj.key}" title="Edit Link">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
-          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="currentColor" stroke-width="1.5"/>
-          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke="currentColor" stroke-width="1.5"/>
-          <circle cx="19" cy="19" r="4" fill="var(--card)" stroke="currentColor" stroke-width="1.5"/>
-          <path d="M19 17v4M17 19h4" stroke="currentColor" stroke-width="1.5"/>
-        </svg>
-      </button>` : ''}
-      <button class="icon-btn rename-btn" data-key="${obj.key}" title="Rename">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
-          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" stroke-width="1.5"/>
-          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="1.5"/>
-        </svg>
-      </button>
-      <button class="icon-btn copy-btn" data-key="${obj.key}" title="Copy">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
-          <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="1.5"/>
-          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="1.5"/>
-        </svg>
-      </button>
-      <button class="icon-btn move-btn" data-key="${obj.key}" title="Move">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
-          <path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" stroke-width="1.5"/>
-        </svg>
-      </button>
-      <button class="icon-btn delete-btn" data-key="${obj.key}" title="Delete">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
-          <path d="M3 6h18M8 6V4h8v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z" stroke="currentColor" stroke-width="1.5"/>
-        </svg>
-      </button>
+      <button class="icon-btn edit-link-btn" data-key="${obj.key}" style="display:none"></button>
+      <button class="icon-btn rename-btn" data-key="${obj.key}" style="display:none"></button>
+      <button class="icon-btn copy-btn" data-key="${obj.key}" style="display:none"></button>
+      <button class="icon-btn move-btn" data-key="${obj.key}" style="display:none"></button>
+      <button class="icon-btn delete-btn" data-key="${obj.key}" style="display:none"></button>
     </div>
   </div>
 </div>`;
@@ -1252,6 +1411,19 @@ async function loadStorageUsage() {
 
 // Load storage on page load
 loadStorageUsage();
+
+// Password caching using sessionStorage
+function getCachedPassword() {
+  return sessionStorage.getItem('fileManagerPassword');
+}
+
+function setCachedPassword(password) {
+  sessionStorage.setItem('fileManagerPassword', password);
+}
+
+function clearCachedPassword() {
+  sessionStorage.removeItem('fileManagerPassword');
+}
 
 // Toast notification helper
 function showToast(message, type = 'info') {
@@ -1405,12 +1577,195 @@ function showConfirm(title, message, onConfirm) {
 }
 
 function askPassword(callback) {
+  const cached = getCachedPassword();
+  if (cached) {
+    callback(cached);
+    return;
+  }
+  
   showModal("Password Required", [
     { label: "Password", type: "password", placeholder: "Enter password" }
   ], (password) => {
-    if (password) callback(password);
+    if (password) {
+      setCachedPassword(password);
+      callback(password);
+    }
   });
 }
+
+// Kebab menu functionality
+document.addEventListener('click', (e) => {
+  // Close all dropdowns when clicking outside
+  if (!e.target.closest('.menu-btn') && !e.target.closest('.dropdown-menu')) {
+    document.querySelectorAll('.dropdown-menu').forEach(menu => menu.remove());
+  }
+});
+
+document.querySelectorAll('.menu-btn').forEach(btn => {
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    
+    // Close other menus
+    document.querySelectorAll('.dropdown-menu').forEach(menu => {
+      if (menu !== btn.nextElementSibling) menu.remove();
+    });
+    
+    // Toggle current menu
+    const existing = btn.nextElementSibling;
+    if (existing && existing.classList.contains('dropdown-menu')) {
+      existing.remove();
+      return;
+    }
+    
+    const key = btn.dataset.key;
+    const isLink = btn.dataset.isLink === 'true';
+    const viewUrl = btn.dataset.viewUrl;
+    const fileName = key.split('/').pop();
+    
+    const menu = document.createElement('div');
+    menu.className = 'dropdown-menu active';
+    
+    // View
+    const viewItem = document.createElement('button');
+    viewItem.className = 'dropdown-item';
+    viewItem.innerHTML = '<svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z\" stroke=\"currentColor\" stroke-width=\"1.5\"/><circle cx=\"12\" cy=\"12\" r=\"3\" stroke=\"currentColor\" stroke-width=\"1.5\"/></svg> View';
+    viewItem.onclick = () => {
+      menu.remove();
+      const videoExt = ['.mp4', '.webm', '.ogg', '.mov', '.avi', '.mkv'];
+      const audioExt = ['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac'];
+      const isVideo = videoExt.some(ext => fileName.toLowerCase().endsWith(ext));
+      const isAudio = audioExt.some(ext => fileName.toLowerCase().endsWith(ext));
+      
+      if (isVideo || isAudio) {
+        const overlay = document.createElement(\"div\");
+        overlay.className = \"modal-overlay\";
+        overlay.style.cssText = \"display:flex;justify-content:center;align-items:center;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:1000;animation:fadeIn 0.2s ease-out\";
+        
+        const modal = document.createElement(\"div\");
+        modal.className = \"media-modal\";
+        
+        const title = document.createElement(\"div\");
+        title.className = \"media-modal-title\";
+        title.textContent = fileName;
+        
+        const mediaElement = isVideo ? document.createElement(\"video\") : document.createElement(\"audio\");
+        mediaElement.src = viewUrl;
+        mediaElement.controls = true;
+        mediaElement.autoplay = true;
+        
+        const closeBtn = document.createElement(\"button\");
+        closeBtn.className = \"media-modal-close\";
+        closeBtn.textContent = \"Close\";
+        closeBtn.onclick = () => { mediaElement.pause(); document.body.removeChild(overlay); };
+        
+        modal.appendChild(title);
+        modal.appendChild(mediaElement);
+        modal.appendChild(closeBtn);
+        overlay.appendChild(modal);
+        overlay.onclick = (e) => { if (e.target === overlay) { mediaElement.pause(); document.body.removeChild(overlay); } };
+        document.body.appendChild(overlay);
+      } else {
+        window.open(viewUrl, \"_blank\");
+      }
+    };
+    menu.appendChild(viewItem);
+    
+    // Copy Link
+    const copyLinkItem = document.createElement('button');
+    copyLinkItem.className = 'dropdown-item';
+    copyLinkItem.innerHTML = '<svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71\" stroke=\"currentColor\" stroke-width=\"1.5\"/><path d=\"M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71\" stroke=\"currentColor\" stroke-width=\"1.5\"/></svg> Copy Link';
+    copyLinkItem.onclick = () => {
+      menu.remove();
+      navigator.clipboard.writeText(window.location.origin + viewUrl).then(() => {
+        showToast(\"Link copied to clipboard!\", \"success\");
+      }).catch(() => {
+        showToast(\"Failed to copy link\", \"error\");
+      });
+    };
+    menu.appendChild(copyLinkItem);
+    
+    // Edit Link (only for links)
+    if (isLink) {
+      const editItem = document.createElement('button');
+      editItem.className = 'dropdown-item';
+      editItem.innerHTML = '<svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7\" stroke=\"currentColor\" stroke-width=\"1.5\"/><path d=\"M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z\" stroke=\"currentColor\" stroke-width=\"1.5\"/></svg> Edit Link';
+      editItem.onclick = () => {
+        menu.remove();
+        document.querySelector('.edit-link-btn[data-key=\"' + key + '\"]')?.click();
+      };
+      menu.appendChild(editItem);
+    }
+    
+    // Rename
+    const renameItem = document.createElement('button');
+    renameItem.className = 'dropdown-item';
+    renameItem.innerHTML = '<svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7\" stroke=\"currentColor\" stroke-width=\"1.5\"/><path d=\"M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z\" stroke=\"currentColor\" stroke-width=\"1.5\"/></svg> Rename';
+    renameItem.onclick = () => {
+      menu.remove();
+      askPassword(async (password) => {
+        showModal(\"Rename\", [{ label: \"New name\", value: fileName, placeholder: \"filename.ext\" }], async (newName) => {
+          if (!newName) return;
+          try {
+            const res = await fetch(window.location.pathname + \"?action=rename\", {
+              method: \"POST\",
+              headers: { \"Content-Type\": \"application/json\", \"x-password\": password },
+              body: JSON.stringify({ key, newName })
+            });
+            if (res.status === 401) { clearCachedPassword(); showToast(\"Incorrect password\", \"error\"); return; }
+            if (res.status === 200) { showToast(\"Renamed successfully\", \"success\"); setTimeout(() => location.reload(), 500); }
+            else { showToast(\"Rename failed\", \"error\"); }
+          } catch (err) { showToast(\"Error: \" + err.message, \"error\"); }
+        });
+      });
+    };
+    menu.appendChild(renameItem);
+    
+    // Copy
+    const copyItem = document.createElement('button');
+    copyItem.className = 'dropdown-item';
+    copyItem.innerHTML = '<svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\"><rect x=\"9\" y=\"9\" width=\"13\" height=\"13\" rx=\"2\" stroke=\"currentColor\" stroke-width=\"1.5\"/><path d=\"M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1\" stroke=\"currentColor\" stroke-width=\"1.5\"/></svg> Copy';
+    copyItem.onclick = () => {
+      menu.remove();
+      document.querySelector('.copy-btn[data-key=\"' + key + '\"]')?.click();
+    };
+    menu.appendChild(copyItem);
+    
+    // Move
+    const moveItem = document.createElement('button');
+    moveItem.className = 'dropdown-item';
+    moveItem.innerHTML = '<svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M12 19V5M5 12l7-7 7 7\" stroke=\"currentColor\" stroke-width=\"1.5\"/></svg> Move';
+    moveItem.onclick = () => {
+      menu.remove();
+      document.querySelector('.move-btn[data-key=\"' + key + '\"]')?.click();
+    };
+    menu.appendChild(moveItem);
+    
+    // Delete
+    const deleteItem = document.createElement('button');
+    deleteItem.className = 'dropdown-item danger';
+    deleteItem.innerHTML = '<svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M3 6h18M8 6V4h8v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z\" stroke=\"currentColor\" stroke-width=\"1.5\"/></svg> Delete';
+    deleteItem.onclick = () => {
+      menu.remove();
+      showConfirm(\"Delete File\", \"Delete \\\"\" + fileName + \"\\\"? This cannot be undone.\", () => {
+        askPassword(async (password) => {
+          try {
+            const res = await fetch(window.location.pathname + \"?action=delete\", {
+              method: \"POST\",
+              headers: { \"Content-Type\": \"application/json\", \"x-password\": password },
+              body: JSON.stringify({ key })
+            });
+            if (res.status === 401) { clearCachedPassword(); showToast(\"Incorrect password\", \"error\"); return; }
+            if (res.status === 200) { showToast(\"File deleted\", \"success\"); setTimeout(() => location.reload(), 500); }
+            else { showToast(\"Delete failed: \" + (await res.text()), \"error\"); }
+          } catch (err) { showToast(\"Delete error: \" + err.message, \"error\"); }
+        });
+      });
+    };
+    menu.appendChild(deleteItem);
+    
+    btn.parentElement.appendChild(menu);
+  });
+});
 
 // Bulk selection
 const bulkActions = document.getElementById("bulkActions");
@@ -1478,6 +1833,7 @@ bulkDeleteBtn.addEventListener("click", () => {
           if (res.status === 200) {
             success++;
           } else if (res.status === 401) {
+            clearCachedPassword();
             showToast("Incorrect password", "error");
             return;
           } else {
@@ -1610,6 +1966,7 @@ createFolderBtn.addEventListener("click", async () => {
           showToast("Folder created successfully", "success");
           setTimeout(() => location.reload(), 500);
         } else if (res.status === 401) {
+          clearCachedPassword();
           showToast("Incorrect password", "error");
         } else {
           const errorText = await res.text();
@@ -1882,6 +2239,7 @@ document.querySelectorAll(".edit-link-btn").forEach(btn => {
         });
         
         if (getRes.status === 401) {
+          clearCachedPassword();
           showToast("Incorrect password", "error");
           return;
         }
