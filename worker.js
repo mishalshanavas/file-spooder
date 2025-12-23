@@ -344,12 +344,12 @@ body {
   align-items: stretch; 
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 12px; 
-  padding: 12px;
+  gap: 10px; 
+  padding: 10px;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .header-left {
@@ -457,9 +457,9 @@ body {
 .btn { 
   background: var(--card); 
   color: var(--text); 
-  padding: 0 16px; 
-  height: 38px;
-  min-height: 44px;
+  padding: 0 14px; 
+  height: 36px;
+  min-height: 40px;
   border-radius: 6px; 
   border: 1px solid var(--border); 
   font-size: 14px;
@@ -469,8 +469,55 @@ body {
   white-space: nowrap;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
-  flex: 1;
-  min-width: fit-content;
+  position: relative;
+}
+
+.add-btn-group {
+  position: relative;
+}
+
+.add-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  min-width: 180px;
+  z-index: 1000;
+  display: none;
+  overflow: hidden;
+}
+
+.add-dropdown.active {
+  display: block;
+  animation: scaleIn 0.15s ease-out;
+}
+
+.add-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  color: var(--text);
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  font-size: 13px;
+  transition: background 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.add-dropdown-item:hover {
+  background: var(--hover);
+}
+
+.add-dropdown-item svg {
+  flex-shrink: 0;
+  opacity: 0.7;
 }
 
 .btn:hover { 
@@ -638,11 +685,11 @@ body {
   display: flex; 
   align-items: center; 
   justify-content: space-between; 
-  gap: 12px; 
-  padding: 12px 10px;
+  gap: 10px; 
+  padding: 8px 10px;
   border-bottom: 1px solid var(--border);
   transition: background 0.15s;
-  min-height: 56px;
+  min-height: 48px;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -676,6 +723,11 @@ body {
   accent-color: var(--accent);
   flex-shrink: 0;
   -webkit-tap-highlight-color: transparent;
+  display: none;
+}
+
+.selection-mode .file-checkbox {
+  display: block;
 }
 
 .item.selected {
@@ -1203,9 +1255,17 @@ body {
         <option value="date-asc">Date (Old-New)</option>
         <option value="date-desc">Date (New-Old)</option>
       </select>
-      <button id="uploadBtn" class="btn">Upload</button>
-      <button id="createLinkBtn" class="btn">Create Link</button>
-      <button id="createFolderBtn" class="btn">New Folder</button>
+      <div class="add-btn-group">
+        <button id="addBtn" class="btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="display:inline-block;vertical-align:middle;margin-right:6px;">
+            <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          Add
+        </button>
+      </div>
+      <button id="uploadBtn" class="btn" style="display:none"></button>
+      <button id="createLinkBtn" class="btn" style="display:none"></button>
+      <button id="createFolderBtn" class="btn" style="display:none"></button>
     </div>
   </div>
 
@@ -1593,6 +1653,95 @@ function askPassword(callback) {
   });
 }
 
+// Add button dropdown
+document.getElementById('addBtn')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  
+  const existingDropdown = document.querySelector('.add-dropdown');
+  if (existingDropdown) {
+    existingDropdown.remove();
+    return;
+  }
+  
+  const dropdown = document.createElement('div');
+  dropdown.className = 'add-dropdown active';
+  
+  const uploadItem = document.createElement('button');
+  uploadItem.className = 'add-dropdown-item';
+  uploadItem.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg> Upload File';
+  uploadItem.onclick = () => {
+    dropdown.remove();
+    document.getElementById('uploadBtn').click();
+  };
+  dropdown.appendChild(uploadItem);
+  
+  const linkItem = document.createElement('button');
+  linkItem.className = 'add-dropdown-item';
+  linkItem.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="currentColor" stroke-width="1.5"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke="currentColor" stroke-width="1.5"/></svg> Create Link';
+  linkItem.onclick = () => {
+    dropdown.remove();
+    document.getElementById('createLinkBtn').click();
+  };
+  dropdown.appendChild(linkItem);
+  
+  const folderItem = document.createElement('button');
+  folderItem.className = 'add-dropdown-item';
+  folderItem.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M3 7h6l2 2h10v10c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V7z" stroke="currentColor" stroke-width="1.5"/><path d="M12 13v6M9 16h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg> New Folder';
+  folderItem.onclick = () => {
+    dropdown.remove();
+    document.getElementById('createFolderBtn').click();
+  };
+  dropdown.appendChild(folderItem);
+  
+  document.querySelector('.add-btn-group').appendChild(dropdown);
+});
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.add-btn-group')) {
+    document.querySelectorAll('.add-dropdown').forEach(d => d.remove());
+  }
+});
+
+// Long press for selection mode
+let longPressTimer;
+let selectionMode = false;
+
+document.querySelectorAll('.item').forEach(item => {
+  const startLongPress = (e) => {
+    if (e.target.closest('.menu-btn') || e.target.closest('a')) return;
+    
+    longPressTimer = setTimeout(() => {
+      selectionMode = true;
+      document.body.classList.add('selection-mode');
+      const checkbox = item.querySelector('.file-checkbox');
+      if (checkbox) {
+        checkbox.checked = true;
+        checkbox.dispatchEvent(new Event('change'));
+      }
+    }, 500);
+  };
+  
+  const cancelLongPress = () => {
+    clearTimeout(longPressTimer);
+  };
+  
+  item.addEventListener('touchstart', startLongPress);
+  item.addEventListener('touchend', cancelLongPress);
+  item.addEventListener('touchmove', cancelLongPress);
+  item.addEventListener('mousedown', startLongPress);
+  item.addEventListener('mouseup', cancelLongPress);
+  item.addEventListener('mousemove', cancelLongPress);
+});
+
+// Exit selection mode when no items selected
+function checkSelectionMode() {
+  const anyChecked = Array.from(document.querySelectorAll('.file-checkbox')).some(cb => cb.checked);
+  if (!anyChecked && selectionMode) {
+    selectionMode = false;
+    document.body.classList.remove('selection-mode');
+  }
+}
+
 // Kebab menu functionality
 document.addEventListener('click', (e) => {
   // Close all dropdowns when clicking outside
@@ -1624,51 +1773,6 @@ document.querySelectorAll('.menu-btn').forEach(btn => {
     
     const menu = document.createElement('div');
     menu.className = 'dropdown-menu active';
-    
-    // View
-    const viewItem = document.createElement('button');
-    viewItem.className = 'dropdown-item';
-    viewItem.innerHTML = '<svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z\" stroke=\"currentColor\" stroke-width=\"1.5\"/><circle cx=\"12\" cy=\"12\" r=\"3\" stroke=\"currentColor\" stroke-width=\"1.5\"/></svg> View';
-    viewItem.onclick = () => {
-      menu.remove();
-      const videoExt = ['.mp4', '.webm', '.ogg', '.mov', '.avi', '.mkv'];
-      const audioExt = ['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac'];
-      const isVideo = videoExt.some(ext => fileName.toLowerCase().endsWith(ext));
-      const isAudio = audioExt.some(ext => fileName.toLowerCase().endsWith(ext));
-      
-      if (isVideo || isAudio) {
-        const overlay = document.createElement(\"div\");
-        overlay.className = \"modal-overlay\";
-        overlay.style.cssText = \"display:flex;justify-content:center;align-items:center;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:1000;animation:fadeIn 0.2s ease-out\";
-        
-        const modal = document.createElement(\"div\");
-        modal.className = \"media-modal\";
-        
-        const title = document.createElement(\"div\");
-        title.className = \"media-modal-title\";
-        title.textContent = fileName;
-        
-        const mediaElement = isVideo ? document.createElement(\"video\") : document.createElement(\"audio\");
-        mediaElement.src = viewUrl;
-        mediaElement.controls = true;
-        mediaElement.autoplay = true;
-        
-        const closeBtn = document.createElement(\"button\");
-        closeBtn.className = \"media-modal-close\";
-        closeBtn.textContent = \"Close\";
-        closeBtn.onclick = () => { mediaElement.pause(); document.body.removeChild(overlay); };
-        
-        modal.appendChild(title);
-        modal.appendChild(mediaElement);
-        modal.appendChild(closeBtn);
-        overlay.appendChild(modal);
-        overlay.onclick = (e) => { if (e.target === overlay) { mediaElement.pause(); document.body.removeChild(overlay); } };
-        document.body.appendChild(overlay);
-      } else {
-        window.open(viewUrl, \"_blank\");
-      }
-    };
-    menu.appendChild(viewItem);
     
     // Copy Link
     const copyLinkItem = document.createElement('button');
@@ -1797,7 +1901,10 @@ function updateBulkUI() {
 }
 
 checkboxes.forEach(cb => {
-  cb.addEventListener("change", updateBulkUI);
+  cb.addEventListener("change", () => {
+    updateBulkUI();
+    checkSelectionMode();
+  });
 });
 
 selectAllBtn.addEventListener("click", () => {
