@@ -38,9 +38,18 @@ export default {
         return new Response("Bad JSON", { status: 400 });
       }
 
+
       let targetUrl = data.url;
       const linkName = data.name || "link";
       if (!targetUrl) return new Response("No URL provided", { status: 400 });
+
+      // Auto-convert GitHub blob URLs to raw URLs
+      const githubBlobRegex = /^https:\/\/github\.com\/([^\/]+)\/([^\/]+)\/blob\/(.+)$/;
+      const match = targetUrl.match(githubBlobRegex);
+      if (match) {
+        // match[1]=user, match[2]=repo, match[3]=path
+        targetUrl = `https://raw.githubusercontent.com/${match[1]}/${match[2]}/${match[3].replace(/^[^/]+\//, '')}`;
+      }
 
       // Ensure URL has a protocol
       if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
@@ -124,6 +133,68 @@ export default {
         await env.R2_BUCKET.delete(oldKey);
 
         return new Response(JSON.stringify({ ok: true, newKey }), { 
+          headers: { "content-type": "application/json" } 
+        });
+      }
+
+      if (action === "editLink") {
+        const key = data.key;
+        let newUrl = data.url;
+        if (!key || !newUrl) return new Response("Missing params", { status: 400 });
+        if (!key.endsWith(".link")) return new Response("Not a link file", { status: 400 });
+
+        // Auto-convert GitHub blob URLs to raw URLs
+        const githubBlobRegex = /^https:\/\/github\.com\/([^\/]+)\/([^\/]+)\/blob\/(.+)$/;
+        const match = newUrl.match(githubBlobRegex);
+        if (match) {
+          newUrl = `https://raw.githubusercontent.com/${match[1]}/${match[2]}/${match[3].replace(/^[^\/]+\//, '')}`;
+        }
+
+        // Ensure URL has a protocol
+        if (!newUrl.startsWith("http://") && !newUrl.startsWith("https://")) {
+          newUrl = "https://" + newUrl;
+        }
+
+        await env.R2_BUCKET.put(key, newUrl, {
+          httpMetadata: { contentType: "text/plain" }
+        });
+
+        return new Response(JSON.stringify({ ok: true }), { 
+          headers: { "content-type": "application/json" } 
+        });
+      }
+
+      if (action === "getLink") {
+        const key = data.key;
+        if (!key) return new Response("No key", { status: 400 });
+        if (!key.endsWith(".link")) return new Response("Not a link file", { status: 400 });
+
+        const obj = await env.R2_BUCKET.get(key);
+        if (!obj) return new Response("Not found", { status: 404 });
+
+        const url = await obj.text();
+        return new Response(JSON.stringify({ ok: true, url }), { 
+          headers: { "content-type": "application/json" } 
+        });
+      }
+
+      if (action === "createFolder") {
+        const folderName = data.name;
+        if (!folderName) return new Response("No folder name", { status: 400 });
+        
+        // Sanitize folder name
+        const cleanName = folderName.trim().replace(/[\/\\]/g, "");
+        if (!cleanName) return new Response("Invalid folder name", { status: 400 });
+        
+        const currentPrefix = path.endsWith("/") ? path.slice(1) : "";
+        const key = currentPrefix + cleanName + "/.folder";
+        
+        // Create a placeholder file to make the folder exist
+        await env.R2_BUCKET.put(key, "", {
+          httpMetadata: { contentType: "text/plain" }
+        });
+        
+        return new Response(JSON.stringify({ ok: true }), { 
           headers: { "content-type": "application/json" } 
         });
       }
@@ -301,6 +372,37 @@ body {
   font-weight: 500;
 }
 
+/* Drop zone */
+.drop-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(58, 159, 217, 0.15);
+  border: 3px dashed var(--accent);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 3000;
+  pointer-events: none;
+}
+
+.drop-overlay.active {
+  display: flex;
+}
+
+.drop-message {
+  background: var(--card);
+  padding: 24px 48px;
+  border-radius: 12px;
+  border: 1px solid var(--accent);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--accent);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+
 /* List */
 .list { 
   background: var(--card);
@@ -338,6 +440,16 @@ body {
 .icon {
   flex-shrink: 0;
   opacity: 0.7;
+}
+
+.thumb {
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
 }
 
 .name { 
@@ -611,7 +723,12 @@ body {
       </div>
       <button id="uploadBtn" class="btn">Upload</button>
       <button id="createLinkBtn" class="btn">Create Link</button>
+      <button id="createFolderBtn" class="btn">New Folder</button>
     </div>
+  </div>
+
+  <div id="dropOverlay" class="drop-overlay">
+    <div class="drop-message">Drop files to upload</div>
   </div>
 
   <div id="progressWrap" class="progress-wrap">
@@ -640,6 +757,73 @@ body {
       }
 
       // Files
+      const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'];
+      const videoExts = ['mp4', 'webm', 'mov', 'avi', 'mkv'];
+      const audioExts = ['mp3', 'wav', 'ogg', 'flac', 'm4a'];
+      const docExts = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'md'];
+      const archiveExts = ['zip', 'rar', '7z', 'tar', 'gz'];
+      const codeExts = ['js', 'ts', 'py', 'html', 'css', 'json', 'xml', 'yaml', 'yml'];
+
+      function getFileExt(filename) {
+        const parts = filename.split('.');
+        return parts.length > 1 ? parts.pop().toLowerCase() : '';
+      }
+
+      function getFileIcon(name, viewUrl) {
+        const ext = getFileExt(name);
+        
+        // Image files - show thumbnail
+        if (imageExts.includes(ext)) {
+          return `<img class="thumb" src="${viewUrl}" alt="" loading="lazy" onerror="this.outerHTML='<svg class=icon width=16 height=16 viewBox=\\'0 0 24 24\\' fill=none><rect x=3 y=3 width=18 height=18 rx=2 stroke=#3a9fd9 stroke-width=1.5/><circle cx=8.5 cy=8.5 r=1.5 fill=#3a9fd9/><path d=\\'M21 15l-5-5L5 21\\' stroke=#3a9fd9 stroke-width=1.5/></svg>'" />`;
+        }
+        
+        // Video files
+        if (videoExts.includes(ext)) {
+          return `<svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <rect x="2" y="4" width="20" height="16" rx="2" stroke="#e57373" stroke-width="1.5"/>
+            <path d="M10 8l6 4-6 4V8z" fill="#e57373"/>
+          </svg>`;
+        }
+        
+        // Audio files
+        if (audioExts.includes(ext)) {
+          return `<svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M9 18V5l12-2v13" stroke="#ba68c8" stroke-width="1.5"/>
+            <circle cx="6" cy="18" r="3" stroke="#ba68c8" stroke-width="1.5"/>
+            <circle cx="18" cy="16" r="3" stroke="#ba68c8" stroke-width="1.5"/>
+          </svg>`;
+        }
+        
+        // Document files
+        if (docExts.includes(ext)) {
+          return `<svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" stroke="#4fc3f7" stroke-width="1.5"/>
+            <path d="M14 2v6h6M8 13h8M8 17h8M8 9h2" stroke="#4fc3f7" stroke-width="1.5"/>
+          </svg>`;
+        }
+        
+        // Archive files
+        if (archiveExts.includes(ext)) {
+          return `<svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M21 8v13H3V3h12l6 5z" stroke="#ffb74d" stroke-width="1.5"/>
+            <path d="M10 10h4v2h-4zM10 14h4v2h-4z" stroke="#ffb74d" stroke-width="1.5"/>
+          </svg>`;
+        }
+        
+        // Code files
+        if (codeExts.includes(ext)) {
+          return `<svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M8 6l-6 6 6 6M16 6l6 6-6 6" stroke="#81c784" stroke-width="1.5"/>
+          </svg>`;
+        }
+        
+        // Default file icon
+        return `<svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M14 2v6h6" stroke="currentColor" stroke-width="1.5"/>
+        </svg>`;
+      }
+
       for (const obj of objects) {
         const name = obj.key.replace(prefix, "");
         const isLink = name.endsWith(".link");
@@ -647,15 +831,16 @@ body {
         const downloadUrl = "/" + obj.key + "?download=1";
         const sizeText = fmtSize(obj.size);
 
+        const iconHtml = isLink 
+          ? `<svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="#3a9fd9" stroke-width="1.5"/>
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke="#3a9fd9" stroke-width="1.5"/>
+            </svg>`
+          : getFileIcon(name, toHref(viewUrl));
+
         html += `<div class="item file" data-name="${name.toLowerCase()}">
   <div class="left">
-    ${isLink ? `<svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none">
-      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="#3a9fd9" stroke-width="1.5"/>
-      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke="#3a9fd9" stroke-width="1.5"/>
-    </svg>` : `<svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" stroke="currentColor" stroke-width="1.5"/>
-      <path d="M14 2v6h6" stroke="currentColor" stroke-width="1.5"/>
-    </svg>`}
+    ${iconHtml}
     <a class="name" href="${isLink ? toHref(viewUrl) : toHref(downloadUrl)}">${name}</a>
   </div>
   <div class="right">
@@ -667,6 +852,14 @@ body {
           <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.5"/>
         </svg>
       </button>
+      ${isLink ? `<button class="icon-btn edit-link-btn" data-key="${obj.key}" title="Edit Link">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke="currentColor" stroke-width="1.5"/>
+          <circle cx="19" cy="19" r="4" fill="var(--card)" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M19 17v4M17 19h4" stroke="currentColor" stroke-width="1.5"/>
+        </svg>
+      </button>` : ''}
       <button class="icon-btn rename-btn" data-key="${obj.key}" title="Rename">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
           <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" stroke-width="1.5"/>
@@ -900,6 +1093,40 @@ createLinkBtn.addEventListener("click", async () => {
   });
 });
 
+// Create Folder
+const createFolderBtn = document.getElementById("createFolderBtn");
+createFolderBtn.addEventListener("click", async () => {
+  showModal("Create Folder", [
+    { label: "Folder name", placeholder: "New Folder" }
+  ], async (name) => {
+    if (!name) return;
+    
+    askPassword(async (password) => {
+      try {
+        const res = await fetch(window.location.pathname + "?action=createFolder", {
+          method: "POST",
+          headers: { 
+            "Content-Type": "application/json",
+            "x-password": password
+          },
+          body: JSON.stringify({ name })
+        });
+        
+        if (res.status === 200) {
+          showToast("Folder created successfully", "success");
+          setTimeout(() => location.reload(), 500);
+        } else if (res.status === 401) {
+          showToast("Incorrect password", "error");
+        } else {
+          showToast("Failed to create folder: " + (await res.text()), "error");
+        }
+      } catch (err) {
+        showToast("Error: " + err.message, "error");
+      }
+    });
+  });
+});
+
 // Upload
 const uploadBtn = document.getElementById("uploadBtn");
 const progressWrap = document.getElementById("progressWrap");
@@ -957,11 +1184,149 @@ uploadBtn.addEventListener("click", () => {
   fi.click();
 });
 
+// Drag and drop upload
+const dropOverlay = document.getElementById("dropOverlay");
+let dragCounter = 0;
+
+function uploadFileWithPassword(file) {
+  askPassword((password) => {
+    const xhr = new XMLHttpRequest();
+    const targetUrl = window.location.pathname + "?upload=1";
+    xhr.open("POST", targetUrl, true);
+    xhr.setRequestHeader("x-password", password);
+    
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const pct = Math.round((e.loaded / e.total) * 100);
+        progressWrap.style.display = "flex";
+        progressBar.style.width = pct + "%";
+        progressText.textContent = pct + "%";
+      }
+    };
+    
+    xhr.onload = () => {
+      if (xhr.status === 200) {
+        progressBar.style.width = "100%";
+        progressText.textContent = "100%";
+        setTimeout(() => {
+          progressWrap.style.display = "none";
+          progressBar.style.width = "0%";
+          progressText.textContent = "0%";
+          location.reload();
+        }, 700);
+      } else if (xhr.status === 401) {
+        showToast("Incorrect password", "error");
+        progressWrap.style.display = "none";
+        progressBar.style.width = "0%";
+      } else {
+        showToast("Upload failed", "error");
+        progressWrap.style.display = "none";
+        progressBar.style.width = "0%";
+      }
+    };
+    
+    const fd = new FormData();
+    fd.append("file", file, file.name);
+    xhr.send(fd);
+  });
+}
+
+document.addEventListener("dragenter", (e) => {
+  e.preventDefault();
+  dragCounter++;
+  dropOverlay.classList.add("active");
+});
+
+document.addEventListener("dragleave", (e) => {
+  e.preventDefault();
+  dragCounter--;
+  if (dragCounter === 0) {
+    dropOverlay.classList.remove("active");
+  }
+});
+
+document.addEventListener("dragover", (e) => {
+  e.preventDefault();
+});
+
+document.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dragCounter = 0;
+  dropOverlay.classList.remove("active");
+  
+  const files = e.dataTransfer.files;
+  if (files.length > 0) {
+    uploadFileWithPassword(files[0]);
+  }
+});
+
 // View
 document.querySelectorAll(".view-btn").forEach(btn => {
   btn.addEventListener("click", () => {
     const href = btn.getAttribute("data-href");
     window.open(href, "_blank");
+  });
+});
+
+// Edit Link
+document.querySelectorAll(".edit-link-btn").forEach(btn => {
+  btn.addEventListener("click", async () => {
+    const key = btn.getAttribute("data-key");
+    
+    askPassword(async (password) => {
+      try {
+        // First, get the current URL
+        const getRes = await fetch(window.location.pathname + "?action=getLink", {
+          method: "POST",
+          headers: { 
+            "Content-Type": "application/json",
+            "x-password": password
+          },
+          body: JSON.stringify({ key })
+        });
+        
+        if (getRes.status === 401) {
+          showToast("Incorrect password", "error");
+          return;
+        }
+        
+        if (!getRes.ok) {
+          showToast("Failed to get link: " + (await getRes.text()), "error");
+          return;
+        }
+        
+        const data = await getRes.json();
+        const currentUrl = data.url || "";
+        
+        showModal("Edit Link", [
+          { label: "URL", value: currentUrl, placeholder: "https://example.com" }
+        ], async (newUrl) => {
+          if (!newUrl) return;
+          
+          try {
+            const res = await fetch(window.location.pathname + "?action=editLink", {
+              method: "POST",
+              headers: { 
+                "Content-Type": "application/json",
+                "x-password": password
+              },
+              body: JSON.stringify({ key, url: newUrl })
+            });
+            
+            if (res.status === 200) {
+              showToast("Link updated successfully", "success");
+              setTimeout(() => location.reload(), 500);
+            } else {
+              showToast("Failed to update link: " + (await res.text()), "error");
+            }
+          } catch (err) {
+            showToast("Error: " + err.message, "error");
+          }
+        });
+      } catch (err) {
+        showToast("Error: " + err.message, "error");
+      }
+    });
   });
 });
 
