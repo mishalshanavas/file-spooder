@@ -407,25 +407,60 @@ body {
 
 .search-box {
   position: relative;
-  flex: 1;
-  min-width: 120px;
+  width: 100%;
+  max-width: 300px;
 }
 
 .search-box input { 
-  height: 32px; 
+  height: 36px; 
   width: 100%; 
-  padding: 0 32px 0 10px; 
+  padding: 0 36px 0 12px; 
   border-radius: 6px; 
   background: var(--bg); 
   border: 1px solid var(--border); 
   color: var(--text); 
   outline: none; 
-  font-size: 13px;
+  font-size: 14px;
   transition: border-color 0.2s;
 }
 
 .search-box input:focus {
   border-color: var(--accent);
+}
+
+.search-close {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+
+.search-close:hover {
+  background: var(--hover);
+  color: var(--accent);
+}
+
+.icon-only-btn {
+  padding: 0;
+  width: 36px;
+  min-width: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-only-btn svg {
+  margin: 0 !important;
 }
 
 .search-icon {
@@ -1102,20 +1137,33 @@ body {
   }
   
   .controls {
-    flex-direction: column;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
   }
   
   .btn {
-    width: 100%;
+    flex: 1;
+    min-width: fit-content;
+  }
+  
+  .icon-only-btn {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    flex: 0;
   }
   
   .sort-select {
-    width: 100%;
+    flex: 1;
+    min-width: 120px;
     height: 44px;
   }
   
   .search-box {
     width: 100%;
+    max-width: 100%;
+    order: 10;
   }
   
   .search-box input {
@@ -1240,12 +1288,19 @@ body {
           <div class="storage-bar-fill" id="storageFill" style="width: 0%"></div>
         </div>
       </div>
-      <div class="search-box">
-        <input id="q" placeholder="Search..." />
-        <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none">
+      <button id="searchToggle" class="btn icon-only-btn" title="Search">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
           <circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="2"/>
           <path d="M21 21l-4.35-4.35" stroke="currentColor" stroke-width="2"/>
         </svg>
+      </button>
+      <div class="search-box" id="searchBox" style="display: none;">
+        <input id="q" placeholder="Search..." />
+        <button class="search-close" id="searchClose">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+            <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2"/>
+          </svg>
+        </button>
       </div>
       <select id="sortSelect" class="sort-select">
         <option value="name-asc">Name (A-Z)</option>
@@ -1962,8 +2017,26 @@ bulkDeleteBtn.addEventListener("click", () => {
   });
 });
 
-// Search
+// Search toggle
+const searchToggle = document.getElementById("searchToggle");
+const searchBox = document.getElementById("searchBox");
+const searchClose = document.getElementById("searchClose");
 const q = document.getElementById("q");
+
+searchToggle.addEventListener("click", () => {
+  searchBox.style.display = "block";
+  searchToggle.style.display = "none";
+  q.focus();
+});
+
+searchClose.addEventListener("click", () => {
+  searchBox.style.display = "none";
+  searchToggle.style.display = "flex";
+  q.value = "";
+  q.dispatchEvent(new Event("input"));
+});
+
+// Search
 const items = document.querySelectorAll(".item");
 q.addEventListener("input", () => {
   const v = q.value.trim().toLowerCase();
