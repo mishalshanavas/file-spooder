@@ -5,7 +5,7 @@ export default {
     if (!path.startsWith("/")) path = "/" + path;
 
     // === CONFIG ===
-    const ADMIN_PASSWORD = "pineapple";
+    const ADMIN_PASSWORD = env.ADMIN_PASSWORD;
 
     // === HELPERS ===
     function fmtSize(bytes) {
@@ -22,6 +22,16 @@ export default {
     }
 
     const toHref = (s) => encodeURI(s);
+    const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (ch) => {
+      const map = {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+      };
+      return map[ch] || ch;
+    });
 
     // === SERVER-SIDE ACTIONS ===
     // Create Link
@@ -92,6 +102,7 @@ export default {
     // Rename or Delete
     if (request.method === "POST" && url.searchParams.get("action")) {
       const action = url.searchParams.get("action");
+
       const pass = request.headers.get("x-password") || "";
       if (pass !== ADMIN_PASSWORD) {
         return new Response("Unauthorized", { status: 401 });
@@ -120,6 +131,12 @@ export default {
 
         const folder = oldKey.includes("/") ? oldKey.slice(0, oldKey.lastIndexOf("/") + 1) : "";
         const newKey = folder + newName;
+
+        if (newKey === oldKey) {
+          return new Response(JSON.stringify({ ok: true, newKey, noop: true }), {
+            headers: { "content-type": "application/json" }
+          });
+        }
 
         const obj = await env.R2_BUCKET.get(oldKey);
         if (!obj) return new Response("Not found", { status: 404 });
@@ -232,6 +249,12 @@ export default {
         
         const fileName = sourceKey.split("/").pop();
         const destKey = destFolder + fileName;
+
+        if (destKey === sourceKey) {
+          return new Response(JSON.stringify({ ok: true, destKey, noop: true }), {
+            headers: { "content-type": "application/json" }
+          });
+        }
         
         const arrayBuffer = await obj.arrayBuffer();
         const ct = obj.httpMetadata?.contentType || "application/octet-stream";
@@ -247,21 +270,29 @@ export default {
       }
 
       if (action === "listFolders") {
-        // List all folders in the bucket for folder selection
-        const allList = await env.R2_BUCKET.list({ delimiter: "/" });
         const folders = [{path: "", display: "/ (Root)"}];
-        
+
+        async function collectPrefixes(prefix = "") {
+          const out = [];
+          let cursor = undefined;
+          do {
+            const list = await env.R2_BUCKET.list({ prefix, delimiter: "/", cursor });
+            const prefixes = list.commonPrefixes || list.prefixes || [];
+            for (const p of prefixes) out.push(p);
+            cursor = list.truncated ? list.cursor : undefined;
+          } while (cursor);
+          return out;
+        }
+
         async function listRecursive(prefix) {
-          const list = await env.R2_BUCKET.list({ prefix, delimiter: "/" });
-          const prefixes = list.commonPrefixes || list.prefixes || [];
-          
+          const prefixes = await collectPrefixes(prefix);
           for (const p of prefixes) {
             folders.push({path: p, display: "/" + p});
             await listRecursive(p);
           }
         }
-        
-        const rootPrefixes = allList.commonPrefixes || allList.prefixes || [];
+
+        const rootPrefixes = await collectPrefixes("");
         for (const p of rootPrefixes) {
           folders.push({path: p, display: "/" + p});
           await listRecursive(p);
@@ -273,22 +304,31 @@ export default {
       }
 
       if (action === "getStorageUsage") {
-        // Calculate total storage used in the bucket
         let totalSize = 0;
         let cursor = undefined;
-        
         do {
           const list = await env.R2_BUCKET.list({ cursor });
-          const objects = list.objects || [];
-          
-          for (const obj of objects) {
-            totalSize += obj.size || 0;
-          }
-          
+          for (const obj of (list.objects || [])) totalSize += obj.size || 0;
           cursor = list.truncated ? list.cursor : undefined;
         } while (cursor);
-        
         return new Response(JSON.stringify({ ok: true, totalSize }), {
+          headers: { "content-type": "application/json" }
+        });
+      }
+
+      if (action === "deleteFolder") {
+        const folderPrefix = data.prefix;
+        if (!folderPrefix) return new Response("No prefix", { status: 400 });
+
+        let delCursor = undefined;
+        do {
+          const list = await env.R2_BUCKET.list({ prefix: folderPrefix, cursor: delCursor });
+          const keys = (list.objects || []).map(o => o.key);
+          if (keys.length > 0) await env.R2_BUCKET.delete(keys);
+          delCursor = list.truncated ? list.cursor : undefined;
+        } while (delCursor);
+
+        return new Response(JSON.stringify({ ok: true }), {
           headers: { "content-type": "application/json" }
         });
       }
@@ -299,9 +339,19 @@ export default {
     // === DIRECTORY LISTING ===
     if (path === "/" || path.endsWith("/")) {
       const prefix = path === "/" ? "" : path.slice(1);
-      const list = await env.R2_BUCKET.list({ prefix, delimiter: "/" });
-      const prefixes = list.commonPrefixes || list.prefixes || [];
-      const objects = list.objects || [];
+
+      // Paginate listing so >1000 items are not silently truncated
+      const prefixes = [];
+      const objects = [];
+      let listCursor = undefined;
+      do {
+        const list = await env.R2_BUCKET.list({ prefix, delimiter: "/", cursor: listCursor });
+        for (const p of (list.commonPrefixes || list.prefixes || [])) {
+          if (!prefixes.includes(p)) prefixes.push(p);
+        }
+        for (const o of (list.objects || [])) objects.push(o);
+        listCursor = list.truncated ? list.cursor : undefined;
+      } while (listCursor);
 
       let html = `<!doctype html>
 <html>
@@ -1269,11 +1319,13 @@ body {
         let accumulated = '';
         parts.forEach((part, i) => {
           accumulated += part + '/';
+          const partText = escapeHtml(part);
+          const partHref = toHref('/' + accumulated);
           html += `<span class="breadcrumb-sep">/</span>`;
           if (i < parts.length - 1) {
-            html += `<a href="/${accumulated}">${part}</a>`;
+            html += `<a href="${partHref}">${partText}</a>`;
           } else {
-            html += `<span>${part}</span>`;
+            html += `<span>${partText}</span>`;
           }
         });
       }
@@ -1347,15 +1399,27 @@ body {
       for (const p of prefixes) {
         const display = p.replace(prefix, "").replace("/", "");
         const href = "/" + p;
-        html += `<div class="item folder" data-name="${display.toLowerCase()}">
+        const safeDisplay = escapeHtml(display);
+        const safePrefix = escapeHtml(p);
+        const safeDisplayLower = escapeHtml(display.toLowerCase());
+        html += `<div class="item folder" data-name="${safeDisplayLower}" data-prefix="${safePrefix}">
   <div class="left">
     <svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none">
       <path d="M3 7h6l2 2h10v10c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V7z" stroke="#3a9fd9" stroke-width="1.5"/>
     </svg>
-    <a class="name folder-name" href="${toHref(href)}">${display}</a>
+    <a class="name folder-name" href="${toHref(href)}">${safeDisplay}</a>
   </div>
   <div class="right">
     <div class="meta">—</div>
+    <div class="actions">
+      <button class="menu-btn folder-menu-btn" data-prefix="${safePrefix}" data-display="${safeDisplay}" title="Actions">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="5" r="2" fill="currentColor"/>
+          <circle cx="12" cy="12" r="2" fill="currentColor"/>
+          <circle cx="12" cy="19" r="2" fill="currentColor"/>
+        </svg>
+      </button>
+    </div>
   </div>
 </div>`;
       }
@@ -1428,12 +1492,22 @@ body {
         </svg>`;
       }
 
+      let visibleFileCount = 0;
       for (const obj of objects) {
         const name = obj.key.replace(prefix, "");
+        if (name === ".folder") continue;  // skip folder sentinel files
+        visibleFileCount++;
         const isLink = name.endsWith(".link");
         const viewUrl = "/" + obj.key;
         const downloadUrl = "/" + obj.key + "?download=1";
+        const viewHref = toHref(viewUrl);
+        const downloadHref = toHref(downloadUrl);
         const sizeText = fmtSize(obj.size);
+        const safeName = escapeHtml(name);
+        const safeNameLower = escapeHtml(name.toLowerCase());
+        const safeKey = escapeHtml(obj.key);
+        const safeViewHref = escapeHtml(viewHref);
+        const safeDownloadHref = escapeHtml(downloadHref);
         
         // Format uploaded date
         const uploadedDate = obj.uploaded ? new Date(obj.uploaded).toLocaleDateString() : "";
@@ -1444,35 +1518,35 @@ body {
               <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="#3a9fd9" stroke-width="1.5"/>
               <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke="#3a9fd9" stroke-width="1.5"/>
             </svg>`
-          : getFileIcon(name, toHref(viewUrl));
+          : getFileIcon(name, viewHref);
 
-        html += `<div class="item file" data-name="${name.toLowerCase()}" data-key="${obj.key}" data-uploaded="${uploadedTimestamp}">
+        html += `<div class="item file" data-name="${safeNameLower}" data-key="${safeKey}" data-size="${obj.size || 0}" data-uploaded="${uploadedTimestamp}">
   <div class="left">
-    <input type="checkbox" class="file-checkbox" data-key="${obj.key}" />
+    <input type="checkbox" class="file-checkbox" data-key="${safeKey}" />
     ${iconHtml}
-    <a class="name" href="${isLink ? toHref(viewUrl) : toHref(downloadUrl)}">${name}</a>
+    <a class="name" href="${isLink ? safeViewHref : safeDownloadHref}">${safeName}</a>
   </div>
   <div class="right">
     <div class="meta">${sizeText}${uploadedDate ? ` • ${uploadedDate}` : ''}</div>
     <div class="actions">
-      <button class="menu-btn" data-key="${obj.key}" data-is-link="${isLink}" data-view-url="${toHref(viewUrl)}" title="Actions">
+      <button class="menu-btn" data-key="${safeKey}" data-is-link="${isLink}" data-view-url="${safeViewHref}" title="Actions">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
           <circle cx="12" cy="5" r="2" fill="currentColor"/>
           <circle cx="12" cy="12" r="2" fill="currentColor"/>
           <circle cx="12" cy="19" r="2" fill="currentColor"/>
         </svg>
       </button>
-      <button class="icon-btn edit-link-btn" data-key="${obj.key}" style="display:none"></button>
-      <button class="icon-btn rename-btn" data-key="${obj.key}" style="display:none"></button>
-      <button class="icon-btn copy-btn" data-key="${obj.key}" style="display:none"></button>
-      <button class="icon-btn move-btn" data-key="${obj.key}" style="display:none"></button>
-      <button class="icon-btn delete-btn" data-key="${obj.key}" style="display:none"></button>
+      <button class="icon-btn edit-link-btn" data-key="${safeKey}" style="display:none"></button>
+      <button class="icon-btn rename-btn" data-key="${safeKey}" style="display:none"></button>
+      <button class="icon-btn copy-btn" data-key="${safeKey}" style="display:none"></button>
+      <button class="icon-btn move-btn" data-key="${safeKey}" style="display:none"></button>
+      <button class="icon-btn delete-btn" data-key="${safeKey}" style="display:none"></button>
     </div>
   </div>
 </div>`;
       }
 
-      if (prefixes.length === 0 && objects.length === 0) {
+      if (prefixes.length === 0 && visibleFileCount === 0) {
         html += `<div class="empty-state">
   <div class="empty-state-icon">📁</div>
   <div>This folder is empty</div>
@@ -1487,10 +1561,21 @@ body {
 // Fetch and display storage usage
 async function loadStorageUsage() {
   try {
+    const password = getCachedPassword();
+    if (!password) return;
     const res = await fetch(window.location.pathname + "?action=getStorageUsage", {
       method: "POST",
-      headers: { "Content-Type": "application/json" }
+      headers: {
+        "Content-Type": "application/json",
+        "x-password": password
+      },
+      body: JSON.stringify({})
     });
+
+    if (res.status === 401) {
+      clearCachedPassword();
+      return;
+    }
     
     if (res.ok) {
       const data = await res.json();
@@ -1523,6 +1608,21 @@ async function loadStorageUsage() {
     console.error('Failed to load storage usage:', err);
   }
 }
+
+// Scroll position preservation across reloads
+window.addEventListener('beforeunload', () => {
+  sessionStorage.setItem('scrollData', JSON.stringify({ path: location.pathname, y: window.scrollY }));
+});
+window.addEventListener('load', () => {
+  const saved = sessionStorage.getItem('scrollData');
+  if (saved) {
+    sessionStorage.removeItem('scrollData');
+    try {
+      const { path, y } = JSON.parse(saved);
+      if (path === location.pathname) window.scrollTo(0, y);
+    } catch(e) {}
+  }
+});
 
 // Load storage on page load
 loadStorageUsage();
@@ -1805,123 +1905,136 @@ document.addEventListener('click', (e) => {
   }
 });
 
-document.querySelectorAll('.menu-btn').forEach(btn => {
+document.querySelectorAll('.menu-btn:not(.folder-menu-btn)').forEach((btn) => {
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
-    
-    // Close other menus
-    document.querySelectorAll('.dropdown-menu').forEach(menu => {
+
+    document.querySelectorAll('.dropdown-menu').forEach((menu) => {
       if (menu !== btn.nextElementSibling) menu.remove();
     });
-    
-    // Toggle current menu
+
     const existing = btn.nextElementSibling;
     if (existing && existing.classList.contains('dropdown-menu')) {
       existing.remove();
       return;
     }
-    
-    const key = btn.dataset.key;
+
+    const key = btn.dataset.key || '';
+    if (!key) return;
     const isLink = btn.dataset.isLink === 'true';
-    const viewUrl = btn.dataset.viewUrl;
+    const viewUrl = btn.dataset.viewUrl || '';
     const fileName = key.split('/').pop();
-    
+
     const menu = document.createElement('div');
     menu.className = 'dropdown-menu active';
-    
-    // Copy Link
+
     const copyLinkItem = document.createElement('button');
     copyLinkItem.className = 'dropdown-item';
-    copyLinkItem.innerHTML = '<svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71\" stroke=\"currentColor\" stroke-width=\"1.5\"/><path d=\"M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71\" stroke=\"currentColor\" stroke-width=\"1.5\"/></svg> Copy Link';
+    copyLinkItem.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="currentColor" stroke-width="1.5"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke="currentColor" stroke-width="1.5"/></svg> Copy Link';
     copyLinkItem.onclick = () => {
       menu.remove();
       navigator.clipboard.writeText(window.location.origin + viewUrl).then(() => {
-        showToast(\"Link copied to clipboard!\", \"success\");
+        showToast('Link copied to clipboard!', 'success');
       }).catch(() => {
-        showToast(\"Failed to copy link\", \"error\");
+        showToast('Failed to copy link', 'error');
       });
     };
     menu.appendChild(copyLinkItem);
-    
-    // Edit Link (only for links)
+
     if (isLink) {
       const editItem = document.createElement('button');
       editItem.className = 'dropdown-item';
-      editItem.innerHTML = '<svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7\" stroke=\"currentColor\" stroke-width=\"1.5\"/><path d=\"M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z\" stroke=\"currentColor\" stroke-width=\"1.5\"/></svg> Edit Link';
+      editItem.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" stroke-width="1.5"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="1.5"/></svg> Edit Link';
       editItem.onclick = () => {
         menu.remove();
-        document.querySelector('.edit-link-btn[data-key=\"' + key + '\"]')?.click();
+        document.querySelector('.edit-link-btn[data-key="' + key + '"]')?.click();
       };
       menu.appendChild(editItem);
     }
-    
-    // Rename
+
     const renameItem = document.createElement('button');
     renameItem.className = 'dropdown-item';
-    renameItem.innerHTML = '<svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7\" stroke=\"currentColor\" stroke-width=\"1.5\"/><path d=\"M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z\" stroke=\"currentColor\" stroke-width=\"1.5\"/></svg> Rename';
+    renameItem.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" stroke-width="1.5"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="1.5"/></svg> Rename';
     renameItem.onclick = () => {
       menu.remove();
       askPassword(async (password) => {
-        showModal(\"Rename\", [{ label: \"New name\", value: fileName, placeholder: \"filename.ext\" }], async (newName) => {
+        showModal('Rename', [{ label: 'New name', value: fileName, placeholder: 'filename.ext' }], async (newName) => {
           if (!newName) return;
           try {
-            const res = await fetch(window.location.pathname + \"?action=rename\", {
-              method: \"POST\",
-              headers: { \"Content-Type\": \"application/json\", \"x-password\": password },
+            const res = await fetch(window.location.pathname + '?action=rename', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-password': password },
               body: JSON.stringify({ key, newName })
             });
-            if (res.status === 401) { clearCachedPassword(); showToast(\"Incorrect password\", \"error\"); return; }
-            if (res.status === 200) { showToast(\"Renamed successfully\", \"success\"); setTimeout(() => location.reload(), 500); }
-            else { showToast(\"Rename failed\", \"error\"); }
-          } catch (err) { showToast(\"Error: \" + err.message, \"error\"); }
+            if (res.status === 401) {
+              clearCachedPassword();
+              showToast('Incorrect password', 'error');
+              return;
+            }
+            if (res.status === 200) {
+              showToast('Renamed successfully', 'success');
+              setTimeout(() => location.reload(), 500);
+            } else {
+              showToast('Rename failed', 'error');
+            }
+          } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+          }
         });
       });
     };
     menu.appendChild(renameItem);
-    
-    // Copy
+
     const copyItem = document.createElement('button');
     copyItem.className = 'dropdown-item';
-    copyItem.innerHTML = '<svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\"><rect x=\"9\" y=\"9\" width=\"13\" height=\"13\" rx=\"2\" stroke=\"currentColor\" stroke-width=\"1.5\"/><path d=\"M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1\" stroke=\"currentColor\" stroke-width=\"1.5\"/></svg> Copy';
+    copyItem.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="1.5"/></svg> Copy';
     copyItem.onclick = () => {
       menu.remove();
-      document.querySelector('.copy-btn[data-key=\"' + key + '\"]')?.click();
+      document.querySelector('.copy-btn[data-key="' + key + '"]')?.click();
     };
     menu.appendChild(copyItem);
-    
-    // Move
+
     const moveItem = document.createElement('button');
     moveItem.className = 'dropdown-item';
-    moveItem.innerHTML = '<svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M12 19V5M5 12l7-7 7 7\" stroke=\"currentColor\" stroke-width=\"1.5\"/></svg> Move';
+    moveItem.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" stroke-width="1.5"/></svg> Move';
     moveItem.onclick = () => {
       menu.remove();
-      document.querySelector('.move-btn[data-key=\"' + key + '\"]')?.click();
+      document.querySelector('.move-btn[data-key="' + key + '"]')?.click();
     };
     menu.appendChild(moveItem);
-    
-    // Delete
+
     const deleteItem = document.createElement('button');
     deleteItem.className = 'dropdown-item danger';
-    deleteItem.innerHTML = '<svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M3 6h18M8 6V4h8v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z\" stroke=\"currentColor\" stroke-width=\"1.5\"/></svg> Delete';
+    deleteItem.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6V4h8v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z" stroke="currentColor" stroke-width="1.5"/></svg> Delete';
     deleteItem.onclick = () => {
       menu.remove();
-      showConfirm(\"Delete File\", \"Delete \\\"\" + fileName + \"\\\"? This cannot be undone.\", () => {
+      showConfirm('Delete File', 'Delete "' + fileName + '"? This cannot be undone.', () => {
         askPassword(async (password) => {
           try {
-            const res = await fetch(window.location.pathname + \"?action=delete\", {
-              method: \"POST\",
-              headers: { \"Content-Type\": \"application/json\", \"x-password\": password },
+            const res = await fetch(window.location.pathname + '?action=delete', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-password': password },
               body: JSON.stringify({ key })
             });
-            if (res.status === 401) { clearCachedPassword(); showToast(\"Incorrect password\", \"error\"); return; }
-            if (res.status === 200) { showToast(\"File deleted\", \"success\"); setTimeout(() => location.reload(), 500); }
-            else { showToast(\"Delete failed: \" + (await res.text()), \"error\"); }
-          } catch (err) { showToast(\"Delete error: \" + err.message, \"error\"); }
+            if (res.status === 401) {
+              clearCachedPassword();
+              showToast('Incorrect password', 'error');
+              return;
+            }
+            if (res.status === 200) {
+              showToast('File deleted', 'success');
+              setTimeout(() => location.reload(), 500);
+            } else {
+              showToast('Delete failed: ' + (await res.text()), 'error');
+            }
+          } catch (err) {
+            showToast('Delete error: ' + err.message, 'error');
+          }
         });
       });
     };
     menu.appendChild(deleteItem);
-    
+
     btn.parentElement.appendChild(menu);
   });
 });
@@ -2050,7 +2163,8 @@ q.addEventListener("input", () => {
 const sortSelect = document.getElementById("sortSelect");
 const listContainer = document.getElementById("list");
 
-sortSelect.addEventListener("change", () => {
+function applySort() {
+  localStorage.setItem('sortPref', sortSelect.value);
   const [sortBy, order] = sortSelect.value.split("-");
   const fileItems = Array.from(document.querySelectorAll(".item.file"));
   const folderItems = Array.from(document.querySelectorAll(".item.folder"));
@@ -2063,8 +2177,8 @@ sortSelect.addEventListener("change", () => {
       valB = b.dataset.name || "";
       return order === "asc" ? valA.localeCompare(valB) : valB.localeCompare(valA);
     } else if (sortBy === "size") {
-      valA = parseInt(a.querySelector(".meta")?.textContent.replace(/[^0-9]/g, "") || "0");
-      valB = parseInt(b.querySelector(".meta")?.textContent.replace(/[^0-9]/g, "") || "0");
+      valA = parseInt(a.dataset.size || "0");
+      valB = parseInt(b.dataset.size || "0");
       return order === "asc" ? valA - valB : valB - valA;
     } else if (sortBy === "date") {
       valA = parseInt(a.dataset.uploaded || "0");
@@ -2086,7 +2200,16 @@ sortSelect.addEventListener("change", () => {
       '<div>This folder is empty</div>' +
     '</div>';
   }
-});
+}
+
+sortSelect.addEventListener("change", applySort);
+
+// Restore saved sort preference
+const savedSort = localStorage.getItem('sortPref');
+if (savedSort) {
+  sortSelect.value = savedSort;
+  applySort();
+}
 
 // Create Link
 const createLinkBtn = document.getElementById("createLinkBtn");
@@ -2165,78 +2288,103 @@ const progressWrap = document.getElementById("progressWrap");
 const progressBar = document.getElementById("progressBar");
 const progressText = document.getElementById("progressText");
 
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
+
+function confirmLargeFiles(files) {
+  const uploadable = [];
+  for (const file of files) {
+    if (file.size <= MAX_FILE_SIZE) {
+      uploadable.push(file);
+      continue;
+    }
+
+    const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+    const confirmed = confirm(
+      'Warning: The file "' + file.name + '" is ' + fileSizeMB +
+      ' MB, which exceeds the recommended limit of 100 MB.\n\n' +
+      'Large files may take longer to upload and could fail. Do you want to continue?'
+    );
+    if (confirmed) uploadable.push(file);
+  }
+  return uploadable;
+}
+
+function uploadFilesBatch(inputFiles) {
+  if (!inputFiles || inputFiles.length === 0) return;
+  const files = confirmLargeFiles(Array.from(inputFiles));
+  if (files.length === 0) return;
+
+  askPassword((password) => {
+    let completed = 0;
+    let failed = 0;
+    const total = files.length;
+
+    progressWrap.style.display = 'flex';
+    progressBar.style.width = '0%';
+    progressText.textContent = '0/' + total;
+
+    async function uploadNext(index) {
+      if (index >= files.length) {
+        setTimeout(() => {
+          progressWrap.style.display = 'none';
+          progressBar.style.width = '0%';
+          progressText.textContent = '0%';
+
+          if (failed === 0) {
+            showToast('Uploaded ' + completed + ' file(s) successfully', 'success');
+          } else {
+            showToast('Uploaded ' + completed + ', failed ' + failed, 'error');
+          }
+
+          setTimeout(() => location.reload(), 1000);
+        }, 700);
+        return;
+      }
+
+      const file = files[index];
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', window.location.pathname + '?upload=1', true);
+      xhr.setRequestHeader('x-password', password);
+
+      xhr.onload = () => {
+        if (xhr.status === 200) {
+          completed++;
+        } else if (xhr.status === 401) {
+          clearCachedPassword();
+          showToast('Incorrect password', 'error');
+          progressWrap.style.display = 'none';
+          return;
+        } else {
+          failed++;
+        }
+
+        const progress = Math.round(((completed + failed) / total) * 100);
+        progressBar.style.width = progress + '%';
+        progressText.textContent = (completed + failed) + '/' + total;
+        uploadNext(index + 1);
+      };
+
+      xhr.onerror = () => {
+        failed++;
+        uploadNext(index + 1);
+      };
+
+      const fd = new FormData();
+      fd.append('file', file, file.name);
+      xhr.send(fd);
+    }
+
+    uploadNext(0);
+  });
+}
+
 uploadBtn.addEventListener("click", () => {
   const fi = document.createElement("input");
   fi.type = "file";
-  fi.multiple = true; // Allow multiple file selection
+  fi.multiple = true;
   fi.onchange = () => {
     if (!fi.files || fi.files.length === 0) return;
-    const files = Array.from(fi.files);
-    
-    askPassword((password) => {
-      let completed = 0;
-      let failed = 0;
-      const total = files.length;
-      
-      progressWrap.style.display = "flex";
-      progressBar.style.width = "0%";
-      progressText.textContent = "0/" + total;
-      
-      async function uploadNext(index) {
-        if (index >= files.length) {
-          // All done
-          setTimeout(() => {
-            progressWrap.style.display = "none";
-            progressBar.style.width = "0%";
-            progressText.textContent = "0%";
-            
-            if (failed === 0) {
-              showToast("Uploaded " + completed + " file(s) successfully", "success");
-            } else {
-              showToast("Uploaded " + completed + ", failed " + failed, "error");
-            }
-            
-            setTimeout(() => location.reload(), 1000);
-          }, 700);
-          return;
-        }
-        
-        const file = files[index];
-        const xhr = new XMLHttpRequest();
-        const targetUrl = window.location.pathname + "?upload=1";
-        xhr.open("POST", targetUrl, true);
-        xhr.setRequestHeader("x-password", password);
-        
-        xhr.onload = () => {
-          if (xhr.status === 200) {
-            completed++;
-          } else if (xhr.status === 401) {
-            showToast("Incorrect password", "error");
-            progressWrap.style.display = "none";
-            return;
-          } else {
-            failed++;
-          }
-          
-          const progress = Math.round(((completed + failed) / total) * 100);
-          progressBar.style.width = progress + "%";
-          progressText.textContent = (completed + failed) + "/" + total;
-          
-          uploadNext(index + 1);
-        };
-        
-        xhr.onerror = () => {
-          failed++;
-          uploadNext(index + 1);
-        };
-        
-        const fd = new FormData();
-        fd.append("file", file, file.name);
-        xhr.send(fd);
-      }
-      
-      uploadNext(0);
-    });
+    uploadFilesBatch(Array.from(fi.files));
   };
   fi.click();
 });
@@ -2244,64 +2392,6 @@ uploadBtn.addEventListener("click", () => {
 // Drag and drop upload
 const dropOverlay = document.getElementById("dropOverlay");
 let dragCounter = 0;
-
-function uploadFileWithPassword(file) {
-  // Check file size limit (100MB)
-  const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB in bytes
-  
-  if (file.size > MAX_FILE_SIZE) {
-    const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-    const confirmed = confirm(
-      \"Warning: The file \\\"\" + file.name + \"\\\" is \" + fileSizeMB + \" MB, which exceeds the recommended limit of 100 MB.\\n\\n\" +
-      \"Large files may take longer to upload and could fail. Do you want to continue?\"
-    );
-    
-    if (!confirmed) {
-      return; // Cancel upload
-    }
-  }
-  
-  askPassword((password) => {
-    const xhr = new XMLHttpRequest();
-    const targetUrl = window.location.pathname + "?upload=1";
-    xhr.open("POST", targetUrl, true);
-    xhr.setRequestHeader("x-password", password);
-    
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) {
-        const pct = Math.round((e.loaded / e.total) * 100);
-        progressWrap.style.display = "flex";
-        progressBar.style.width = pct + "%";
-        progressText.textContent = pct + "%";
-      }
-    };
-    
-    xhr.onload = () => {
-      if (xhr.status === 200) {
-        progressBar.style.width = "100%";
-        progressText.textContent = "100%";
-        setTimeout(() => {
-          progressWrap.style.display = "none";
-          progressBar.style.width = "0%";
-          progressText.textContent = "0%";
-          location.reload();
-        }, 700);
-      } else if (xhr.status === 401) {
-        showToast("Incorrect password", "error");
-        progressWrap.style.display = "none";
-        progressBar.style.width = "0%";
-      } else {
-        showToast("Upload failed", "error");
-        progressWrap.style.display = "none";
-        progressBar.style.width = "0%";
-      }
-    };
-    
-    const fd = new FormData();
-    fd.append("file", file, file.name);
-    xhr.send(fd);
-  });
-}
 
 document.addEventListener("dragenter", (e) => {
   e.preventDefault();
@@ -2325,80 +2415,9 @@ document.addEventListener("drop", (e) => {
   e.preventDefault();
   dragCounter = 0;
   dropOverlay.classList.remove("active");
-  
-  const files = e.dataTransfer.files;
-  if (files.length > 0) {
-    uploadFileWithPassword(files[0]);
-  }
-});
 
-// View
-document.querySelectorAll(".view-btn").forEach(btn => {
-  btn.addEventListener("click", () => {
-    const href = btn.getAttribute("data-href");
-    const fileName = btn.getAttribute("data-key");
-    
-    // Detect media files
-    const videoExtensions = ['.mp4', '.webm', '.ogg', '.mov', '.avi', '.mkv'];
-    const audioExtensions = ['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac'];
-    
-    const isVideo = videoExtensions.some(ext => fileName.toLowerCase().endsWith(ext));
-    const isAudio = audioExtensions.some(ext => fileName.toLowerCase().endsWith(ext));
-    
-    if (isVideo || isAudio) {
-      // Create media player modal
-      const overlay = document.createElement("div");
-      overlay.className = "modal-overlay";
-      overlay.style.display = "flex";
-      overlay.style.justifyContent = "center";
-      overlay.style.alignItems = "center";
-      overlay.style.position = "fixed";
-      overlay.style.top = "0";
-      overlay.style.left = "0";
-      overlay.style.width = "100%";
-      overlay.style.height = "100%";
-      overlay.style.background = "rgba(0,0,0,0.8)";
-      overlay.style.zIndex = "1000";
-      overlay.style.animation = "fadeIn 0.2s ease-out";
-      
-      const modal = document.createElement("div");
-      modal.className = "media-modal";
-      
-      const title = document.createElement("div");
-      title.className = "media-modal-title";
-      title.textContent = fileName.split('/').pop();
-      
-      const mediaElement = isVideo ? document.createElement("video") : document.createElement("audio");
-      mediaElement.src = href;
-      mediaElement.controls = true;
-      mediaElement.autoplay = true;
-      
-      const closeBtn = document.createElement("button");
-      closeBtn.className = "media-modal-close";
-      closeBtn.textContent = "Close";
-      closeBtn.onclick = () => {
-        mediaElement.pause();
-        document.body.removeChild(overlay);
-      };
-      
-      modal.appendChild(title);
-      modal.appendChild(mediaElement);
-      modal.appendChild(closeBtn);
-      overlay.appendChild(modal);
-      
-      overlay.onclick = (e) => {
-        if (e.target === overlay) {
-          mediaElement.pause();
-          document.body.removeChild(overlay);
-        }
-      };
-      
-      document.body.appendChild(overlay);
-    } else {
-      // Open non-media files in new tab
-      window.open(href, "_blank");
-    }
-  });
+  const files = Array.from(e.dataTransfer.files || []);
+  uploadFilesBatch(files);
 });
 
 // Edit Link
@@ -2683,32 +2702,23 @@ document.querySelectorAll(".move-btn").forEach(btn => {
 });
 
 // Rename
-document.querySelectorAll(".rename-btn").forEach(btn => {
+document.querySelectorAll(".rename-btn").forEach((btn) => {
   btn.addEventListener("click", async () => {
     const key = btn.getAttribute("data-key");
     const currentName = key.split("/").pop();
 
-    showModal("Rename File", [
-      { label: "New filename", value: currentName }
-    ], async (newName) => {
+    showModal("Rename File", [{ label: "New filename", value: currentName }], async (newName) => {
       if (!newName) return;
 
-      // Clean whitespace
       newName = newName.trim();
-
-      // If identical, cancel
       if (newName === currentName) return;
 
-      // Extract old extension
       let oldExt = "";
       if (currentName.includes(".")) {
         oldExt = currentName.split(".").pop();
       }
 
-      // Detect if user typed extension
       const userHasExt = newName.includes(".");
-
-      // If user did NOT specify extension → auto-append old extension
       if (!userHasExt && oldExt) {
         newName = newName + "." + oldExt;
       }
@@ -2717,7 +2727,7 @@ document.querySelectorAll(".rename-btn").forEach(btn => {
         try {
           const res = await fetch(window.location.pathname + "?action=rename", {
             method: "POST",
-            headers: { 
+            headers: {
               "Content-Type": "application/json",
               "x-password": password
             },
@@ -2741,12 +2751,12 @@ document.querySelectorAll(".rename-btn").forEach(btn => {
 });
 
 // Delete
-document.querySelectorAll(".delete-btn").forEach(btn => {
+document.querySelectorAll(".delete-btn").forEach((btn) => {
   btn.addEventListener("click", async () => {
     const key = btn.getAttribute("data-key");
     const filename = key.split("/").pop();
-    
-    showConfirm("Delete File", "Delete \\"" + filename + "\\"? This cannot be undone.", () => {
+
+    showConfirm("Delete File", "Delete \"" + filename + "\"? This cannot be undone.", () => {
       askPassword(async (password) => {
         try {
           const res = await fetch(window.location.pathname + "?action=delete", {
@@ -2754,7 +2764,7 @@ document.querySelectorAll(".delete-btn").forEach(btn => {
             headers: { "Content-Type": "application/json", "x-password": password },
             body: JSON.stringify({ key })
           });
-          
+
           if (res.status === 200) {
             showToast("File deleted", "success");
             setTimeout(() => location.reload(), 500);
@@ -2772,6 +2782,63 @@ document.querySelectorAll(".delete-btn").forEach(btn => {
   });
 });
 
+// Folder kebab menu (delete folder)
+document.querySelectorAll('.folder-menu-btn').forEach((btn) => {
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+
+    document.querySelectorAll('.dropdown-menu').forEach((m) => {
+      if (m !== btn.nextElementSibling) m.remove();
+    });
+
+    const existing = btn.nextElementSibling;
+    if (existing && existing.classList.contains('dropdown-menu')) {
+      existing.remove();
+      return;
+    }
+
+    const prefix = btn.dataset.prefix;
+    const display = btn.dataset.display;
+
+    const menu = document.createElement('div');
+    menu.className = 'dropdown-menu active';
+
+    const deleteItem = document.createElement('button');
+    deleteItem.className = 'dropdown-item danger';
+    deleteItem.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6V4h8v2M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z" stroke="currentColor" stroke-width="1.5"/></svg> Delete Folder';
+    deleteItem.onclick = () => {
+      menu.remove();
+      showConfirm('Delete Folder', 'Delete "' + display + '" and all its contents? This cannot be undone.', () => {
+        askPassword(async (password) => {
+          try {
+            const res = await fetch(window.location.pathname + '?action=deleteFolder', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-password': password },
+              body: JSON.stringify({ prefix })
+            });
+
+            if (res.status === 401) {
+              clearCachedPassword();
+              showToast('Incorrect password', 'error');
+              return;
+            }
+            if (res.status === 200) {
+              showToast('Folder deleted', 'success');
+              setTimeout(() => location.reload(), 500);
+            } else {
+              showToast('Delete failed: ' + (await res.text()), 'error');
+            }
+          } catch (err) {
+            showToast('Error: ' + err.message, 'error');
+          }
+        });
+      });
+    };
+    menu.appendChild(deleteItem);
+    btn.parentElement.appendChild(menu);
+  });
+});
+
 // Keyboard shortcuts
 document.addEventListener("keydown", (e) => {
   // Ctrl+U / Cmd+U: Upload
@@ -2781,12 +2848,12 @@ document.addEventListener("keydown", (e) => {
   }
   
   // F2: Rename selected file (if only one checkbox is checked)
-  if (e.key === \"F2\") {
+  if (e.key === "F2") {
     e.preventDefault();
-    const checked = Array.from(document.querySelectorAll(\".file-checkbox\")).filter(cb => cb.checked);
+    const checked = Array.from(document.querySelectorAll(".file-checkbox")).filter(cb => cb.checked);
     if (checked.length === 1) {
       const key = checked[0].dataset.key;
-      const renameBtn = document.querySelector('.rename-btn[data-key=\"' + key + '\"]');
+      const renameBtn = document.querySelector('.rename-btn[data-key="' + key + '"]');
       if (renameBtn) renameBtn.click();
     }
   }
@@ -2832,7 +2899,8 @@ document.addEventListener("keydown", (e) => {
       const isDownload = url.searchParams.get("download") === "1";
       const headers = {
         "content-type": obj.httpMetadata?.contentType || "application/octet-stream",
-        "content-length": obj.size
+        "content-length": obj.size,
+        "cache-control": "public, max-age=3600"
       };
       
       if (isDownload) {
