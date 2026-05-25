@@ -33,6 +33,15 @@ export default {
       return map[ch] || ch;
     });
 
+    async function objectExists(key) {
+      if (typeof env.R2_BUCKET.head === "function") {
+        const head = await env.R2_BUCKET.head(key);
+        return !!head;
+      }
+      const obj = await env.R2_BUCKET.get(key);
+      return !!obj;
+    }
+
     // === SERVER-SIDE ACTIONS ===
     // Create Link
     if (request.method === "POST" && url.searchParams.get("createLink") === "1") {
@@ -138,6 +147,10 @@ export default {
           });
         }
 
+        if (await objectExists(newKey)) {
+          return new Response("Destination already exists", { status: 409 });
+        }
+
         const obj = await env.R2_BUCKET.get(oldKey);
         if (!obj) return new Response("Not found", { status: 404 });
 
@@ -216,6 +229,57 @@ export default {
         });
       }
 
+      if (action === "renameFolder") {
+        const oldPrefix = data.oldPrefix;
+        const newPrefix = data.newPrefix;
+        if (!oldPrefix || !newPrefix) return new Response("Missing params", { status: 400 });
+
+        if (oldPrefix === newPrefix) {
+          return new Response(JSON.stringify({ ok: true, noop: true }), {
+            headers: { "content-type": "application/json" }
+          });
+        }
+
+        let cursor = undefined;
+        do {
+          const list = await env.R2_BUCKET.list({ prefix: oldPrefix, cursor });
+          for (const obj of (list.objects || [])) {
+            const newKey = newPrefix + obj.key.slice(oldPrefix.length);
+            if (await objectExists(newKey)) {
+              return new Response("Destination already exists: " + newKey, { status: 409 });
+            }
+          }
+          cursor = list.truncated ? list.cursor : undefined;
+        } while (cursor);
+
+        cursor = undefined;
+        const errors = [];
+        do {
+          const list = await env.R2_BUCKET.list({ prefix: oldPrefix, cursor });
+          for (const obj of (list.objects || [])) {
+            const newKey = newPrefix + obj.key.slice(oldPrefix.length);
+            try {
+              const src = await env.R2_BUCKET.get(obj.key);
+              if (src) {
+                const buf = await src.arrayBuffer();
+                await env.R2_BUCKET.put(newKey, buf, {
+                  httpMetadata: { contentType: src.httpMetadata?.contentType || "application/octet-stream" }
+                });
+                await env.R2_BUCKET.delete(obj.key);
+              }
+            } catch (e) {
+              errors.push(obj.key);
+            }
+          }
+          cursor = list.truncated ? list.cursor : undefined;
+        } while (cursor);
+
+        if (errors.length > 0) return new Response("Partial failure: " + errors.join(", "), { status: 500 });
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: { "content-type": "application/json" }
+        });
+      }
+
       if (action === "copyFile") {
         const sourceKey = data.key;
         const destFolder = data.destFolder || "";
@@ -226,6 +290,10 @@ export default {
         
         const fileName = sourceKey.split("/").pop();
         const destKey = destFolder + fileName;
+
+        if (await objectExists(destKey)) {
+          return new Response("Destination already exists", { status: 409 });
+        }
         
         const arrayBuffer = await obj.arrayBuffer();
         const ct = obj.httpMetadata?.contentType || "application/octet-stream";
@@ -254,6 +322,10 @@ export default {
           return new Response(JSON.stringify({ ok: true, destKey, noop: true }), {
             headers: { "content-type": "application/json" }
           });
+        }
+
+        if (await objectExists(destKey)) {
+          return new Response("Destination already exists", { status: 409 });
         }
         
         const arrayBuffer = await obj.arrayBuffer();
@@ -1397,7 +1469,7 @@ body {
 
       // Folders first
       for (const p of prefixes) {
-        const display = p.replace(prefix, "").replace("/", "");
+        const display = p.replace(prefix, "").replace(/\/$/, "");
         const href = "/" + p;
         const safeDisplay = escapeHtml(display);
         const safePrefix = escapeHtml(p);
@@ -1941,6 +2013,41 @@ document.querySelectorAll('.menu-btn:not(.folder-menu-btn)').forEach((btn) => {
     };
     menu.appendChild(copyLinkItem);
 
+    const ext = key.split('.').pop().toLowerCase();
+    const isVideo = ['mp4', 'webm', 'mov', 'avi', 'mkv'].includes(ext);
+    const isAudio = ['mp3', 'wav', 'ogg', 'flac', 'm4a'].includes(ext);
+
+    if (isVideo || isAudio) {
+      const previewItem = document.createElement('button');
+      previewItem.className = 'dropdown-item';
+      previewItem.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.5"/><path d="M10 8l6 4-6 4V8z" fill="currentColor"/></svg> Preview';
+      previewItem.onclick = () => {
+        menu.remove();
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        const modal = document.createElement('div');
+        modal.className = 'media-modal';
+        const title = document.createElement('div');
+        title.className = 'media-modal-title';
+        title.textContent = key.split('/').pop();
+        const media = document.createElement(isVideo ? 'video' : 'audio');
+        media.src = viewUrl;
+        media.controls = true;
+        if (isVideo) media.style.width = '100%';
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'modal-btn';
+        closeBtn.textContent = 'Close';
+        closeBtn.style.marginTop = '12px';
+        closeBtn.style.width = '100%';
+        closeBtn.onclick = () => { media.pause(); overlay.remove(); };
+        modal.append(title, media, closeBtn);
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+        overlay.addEventListener('click', e => { if (e.target === overlay) closeBtn.click(); });
+      };
+      menu.appendChild(previewItem);
+    }
+
     if (isLink) {
       const editItem = document.createElement('button');
       editItem.className = 'dropdown-item';
@@ -1957,9 +2064,9 @@ document.querySelectorAll('.menu-btn:not(.folder-menu-btn)').forEach((btn) => {
     renameItem.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" stroke-width="1.5"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="1.5"/></svg> Rename';
     renameItem.onclick = () => {
       menu.remove();
-      askPassword(async (password) => {
-        showModal('Rename', [{ label: 'New name', value: fileName, placeholder: 'filename.ext' }], async (newName) => {
-          if (!newName) return;
+      showModal('Rename', [{ label: 'New name', value: fileName, placeholder: 'filename.ext' }], async (newName) => {
+        if (!newName) return;
+        askPassword(async (password) => {
           try {
             const res = await fetch(window.location.pathname + '?action=rename', {
               method: 'POST',
@@ -1969,6 +2076,10 @@ document.querySelectorAll('.menu-btn:not(.folder-menu-btn)').forEach((btn) => {
             if (res.status === 401) {
               clearCachedPassword();
               showToast('Incorrect password', 'error');
+              return;
+            }
+            if (res.status === 409) {
+              showToast('Rename failed: destination exists', 'error');
               return;
             }
             if (res.status === 200) {
@@ -2200,6 +2311,13 @@ function applySort() {
       '<div>This folder is empty</div>' +
     '</div>';
   }
+
+  const currentQuery = document.getElementById('q').value.trim().toLowerCase();
+  if (currentQuery) {
+    document.querySelectorAll('.item').forEach(el => {
+      el.style.display = (el.dataset.name || '').includes(currentQuery) ? 'flex' : 'none';
+    });
+  }
 }
 
 sortSelect.addEventListener("change", applySort);
@@ -2235,6 +2353,7 @@ createLinkBtn.addEventListener("click", async () => {
           showToast("Link created successfully", "success");
           setTimeout(() => location.reload(), 500);
         } else if (res.status === 401) {
+          clearCachedPassword();
           showToast("Incorrect password", "error");
         } else {
           showToast("Failed to create link: " + (await res.text()), "error");
@@ -2469,6 +2588,9 @@ document.querySelectorAll(".edit-link-btn").forEach(btn => {
             if (res.status === 200) {
               showToast("Link updated successfully", "success");
               setTimeout(() => location.reload(), 500);
+            } else if (res.status === 401) {
+              clearCachedPassword();
+              showToast("Incorrect password", "error");
             } else {
               showToast("Failed to update link: " + (await res.text()), "error");
             }
@@ -2501,6 +2623,7 @@ document.querySelectorAll(".copy-btn").forEach(btn => {
         });
         
         if (listRes.status === 401) {
+          clearCachedPassword();
           showToast("Incorrect password", "error");
           return;
         }
@@ -2564,9 +2687,14 @@ document.querySelectorAll(".copy-btn").forEach(btn => {
               body: JSON.stringify({ key, destFolder })
             });
             
-            if (res.status === 200) {
+            if (res.status === 401) {
+              clearCachedPassword();
+              showToast("Incorrect password", "error");
+            } else if (res.status === 200) {
               showToast("File copied successfully", "success");
               setTimeout(() => location.reload(), 500);
+            } else if (res.status === 409) {
+              showToast("Copy failed: destination exists", "error");
             } else {
               showToast("Failed to copy: " + (await res.text()), "error");
             }
@@ -2610,6 +2738,7 @@ document.querySelectorAll(".move-btn").forEach(btn => {
         });
         
         if (listRes.status === 401) {
+          clearCachedPassword();
           showToast("Incorrect password", "error");
           return;
         }
@@ -2673,9 +2802,14 @@ document.querySelectorAll(".move-btn").forEach(btn => {
               body: JSON.stringify({ key, destFolder })
             });
             
-            if (res.status === 200) {
+            if (res.status === 401) {
+              clearCachedPassword();
+              showToast("Incorrect password", "error");
+            } else if (res.status === 200) {
               showToast("File moved successfully", "success");
               setTimeout(() => location.reload(), 500);
+            } else if (res.status === 409) {
+              showToast("Move failed: destination exists", "error");
             } else {
               showToast("Failed to move: " + (await res.text()), "error");
             }
@@ -2738,7 +2872,10 @@ document.querySelectorAll(".rename-btn").forEach((btn) => {
             showToast("Renamed to " + newName, "success");
             setTimeout(() => location.reload(), 500);
           } else if (res.status === 401) {
+            clearCachedPassword();
             showToast("Incorrect password", "error");
+          } else if (res.status === 409) {
+            showToast("Rename failed: destination exists", "error");
           } else {
             showToast("Rename failed: " + (await res.text()), "error");
           }
@@ -2769,6 +2906,7 @@ document.querySelectorAll(".delete-btn").forEach((btn) => {
             showToast("File deleted", "success");
             setTimeout(() => location.reload(), 500);
           } else if (res.status === 401) {
+            clearCachedPassword();
             showToast("Incorrect password", "error");
           } else {
             const txt = await res.text();
@@ -2802,6 +2940,33 @@ document.querySelectorAll('.folder-menu-btn').forEach((btn) => {
 
     const menu = document.createElement('div');
     menu.className = 'dropdown-menu active';
+
+    const renameItem = document.createElement('button');
+    renameItem.className = 'dropdown-item';
+    renameItem.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" stroke-width="1.5"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="1.5"/></svg> Rename Folder';
+    renameItem.onclick = () => {
+      menu.remove();
+      showModal('Rename Folder', [{ label: 'New name', value: display, placeholder: 'folder-name' }], (newName) => {
+        if (!newName || newName === display) return;
+        const cleanNew = newName.trim().replace(/[\/\\]/g, '');
+        if (!cleanNew) { showToast('Invalid folder name', 'error'); return; }
+        askPassword(async (password) => {
+          const parentPrefix = prefix.slice(0, prefix.length - display.length - 1);
+          const newPrefix = parentPrefix + cleanNew + '/';
+          try {
+            const res = await fetch(window.location.pathname + '?action=renameFolder', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-password': password },
+              body: JSON.stringify({ oldPrefix: prefix, newPrefix })
+            });
+            if (res.status === 401) { clearCachedPassword(); showToast('Incorrect password', 'error'); return; }
+            if (res.ok) { showToast('Folder renamed', 'success'); setTimeout(() => location.reload(), 500); }
+            else showToast('Rename failed: ' + (await res.text()), 'error');
+          } catch (err) { showToast('Error: ' + err.message, 'error'); }
+        });
+      });
+    };
+    menu.appendChild(renameItem);
 
     const deleteItem = document.createElement('button');
     deleteItem.className = 'dropdown-item danger';
