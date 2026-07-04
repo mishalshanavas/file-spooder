@@ -143,7 +143,7 @@ export default {
       let listCursor = undefined;
       do {
         const list = await listObjects(bucket, { prefix, delimiter: "/", cursor: listCursor });
-        for (const p of (list.commonPrefixes || list.prefixes || [])) {
+        for (const p of (list.delimitedPrefixes || [])) {
           if (!prefixes.includes(p)) prefixes.push(p);
         }
         for (const o of (list.objects || [])) objects.push(o);
@@ -1862,8 +1862,7 @@ document.addEventListener("keydown", (e) => {
     const maybe = await listObjects(bucket, { prefix: maybePrefix, delimiter: "/" });
     const hasFolder =
       (maybe.objects && maybe.objects.length > 0) ||
-      (maybe.commonPrefixes && maybe.commonPrefixes.length > 0) ||
-      (maybe.prefixes && maybe.prefixes.length > 0);
+      (maybe.delimitedPrefixes && maybe.delimitedPrefixes.length > 0);
 
     if (hasFolder) {
       return Response.redirect(url.origin + "/" + maybePrefix, 302);

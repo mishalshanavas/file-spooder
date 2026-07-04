@@ -8,7 +8,7 @@ export async function handleListFolders({ bucket }) {
     let cursor = undefined;
     do {
       const list = await listObjects(bucket, { prefix, delimiter: "/", cursor });
-      const prefixes = list.commonPrefixes || list.prefixes || [];
+      const prefixes = list.delimitedPrefixes || [];
       for (const p of prefixes) out.push(p);
       cursor = list.truncated ? list.cursor : undefined;
     } while (cursor);
