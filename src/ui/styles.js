@@ -40,11 +40,11 @@ body{
 }
 .container{max-width:1280px;margin:0 auto;padding:12px 16px}
 
-/* Top bar */
+/* Top bar — clean Pajamas style */
 .header{
-  display:flex;align-items:center;gap:12px;
-  padding:8px 12px;background:var(--bg);border:1px solid var(--border);
-  border-radius:var(--radius);margin-bottom:8px;
+  display:flex;align-items:center;gap:10px;
+  padding:6px 0;margin-bottom:12px;
+  border-bottom:1px solid var(--border);
 }
 .header-left{display:flex;align-items:center;gap:8px;min-width:0;flex:1}
 .title{
@@ -221,15 +221,11 @@ body{
   box-shadow:var(--shadow-md);min-width:156px;z-index:1000;display:none;overflow:hidden;
 }
 .dropdown-menu.active{display:block}
-.dropdown-item{
-  display:flex;align-items:center;gap:8px;padding:7px 10px;color:var(--text);
-  cursor:pointer;border:none;background:none;width:100%;text-align:left;
-  font-size:12px;font-family:var(--font);transition:background .06s;
+/* Flip dropdown upward for last 5 items to avoid clipping */
+.item:nth-last-child(-n+5) .dropdown-menu,
+.item:nth-last-child(-n+5) .add-dropdown{
+  top:auto;bottom:100%;margin-top:0;margin-bottom:2px;
 }
-.dropdown-item:hover{background:var(--bg-tertiary)}
-.dropdown-item svg{color:var(--text-secondary);flex-shrink:0}
-.dropdown-item.danger{color:var(--red-500)}
-.dropdown-item.danger:hover{background:var(--red-50)}
 
 /* Empty */
 .empty-state{padding:48px 16px;text-align:center;color:var(--text-secondary)}
@@ -300,28 +296,32 @@ body{
 
 /* Mobile */
 @media(max-width:768px){
-  .container{padding:6px 8px}
-  .header{flex-wrap:wrap;padding:8px 10px;gap:6px}
+  .container{padding:8px 10px}
+  .header{flex-wrap:wrap;padding:4px 0 8px;gap:6px}
   .header-left{flex-basis:100%}
-  .controls{flex-basis:100%;flex-wrap:wrap}
+  .controls{flex-basis:100%;flex-wrap:wrap;gap:6px}
   .search-box{width:100%;order:10}
   .search-box input{height:36px;font-size:14px}
-  .sort-select{flex:1;min-width:100px;height:36px}
+  .sort-select{flex:1;min-width:90px;height:36px;font-size:13px}
   .btn{height:36px;padding:0 12px;font-size:13px}
   .icon-only-btn{width:36px;min-width:36px;height:36px}
+  #addBtn{font-size:13px}
   .col-type{display:none}
-  .col-modified{width:68px}
-  .col-size{width:60px}
+  .col-modified{width:64px}
+  .col-size{width:56px}
   .item{min-height:40px;padding:0 6px}
   .name{font-size:13px}
   .meta{font-size:10px}
   .menu-btn,.icon-btn{min-width:34px;min-height:34px}
   .modal{min-width:auto;width:94vw;padding:14px 16px}
+  .modal-title{font-size:15px}
   .modal-input{font-size:14px;padding:9px}
   .modal-btn{height:38px;font-size:13px;padding:0 16px}
   .bulk-actions{flex-wrap:wrap;padding:8px 10px;gap:5px}
   .bulk-btn{height:36px;font-size:12px}
   .storage-meter{flex-basis:100%;min-width:auto;order:-1}
+  .dropdown-menu{min-width:148px}
+  .dropdown-item{padding:9px 12px;font-size:13px}
 }
 
 @media(min-width:769px){.col-type{display:flex}}

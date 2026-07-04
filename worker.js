@@ -69,7 +69,7 @@ export default {
 
       await putObject(bucket, key, arrayBuffer, file.type);
 
-      return new Response("OK", { status: 200 });
+      return new Response("OK", { status: 200, headers: corsHeaders() });
     }
 
     // Action dispatcher
@@ -1304,7 +1304,7 @@ document.addEventListener("drop", (e) => {
 // Edit Link
 document.querySelectorAll(".edit-link-btn").forEach(btn => {
   btn.addEventListener("click", async () => {
-    const key = btn.getAttribute("data-key");
+    const key = btn.dataset.key;
     
     askPassword(async (password) => {
       try {
@@ -1799,7 +1799,7 @@ document.addEventListener("keydown", (e) => {
 </html>`;
 
       return new Response(html, { 
-        headers: { ...corsHeaders(), "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=60" } 
+        headers: { ...corsHeaders(), "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" } 
       });
     }
 
