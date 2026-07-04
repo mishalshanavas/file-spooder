@@ -15,7 +15,7 @@ export async function handleCreateLink({ bucket, path, data }) {
     targetUrl = "https://" + targetUrl;
   }
 
-  const currentPrefix = path.endsWith("/") ? path.slice(1) : "";
+  const currentPrefix = path.endsWith("/") ? decodeURIComponent(path.slice(1)) : "";
   const key = currentPrefix + linkName + LINK_EXTENSION;
 
   await putObject(bucket, key, targetUrl, "text/plain");

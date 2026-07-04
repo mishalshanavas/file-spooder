@@ -11,7 +11,7 @@ export async function handleCreateFolder({ bucket, path, data }) {
     return new Response(nameCheck.error, { status: 400 });
   }
 
-  const currentPrefix = path.endsWith("/") ? path.slice(1) : "";
+  const currentPrefix = path.endsWith("/") ? decodeURIComponent(path.slice(1)) : "";
   const key = currentPrefix + nameCheck.sanitized + "/" + FOLDER_SENTINEL;
 
   await putObject(bucket, key, "", "text/plain");

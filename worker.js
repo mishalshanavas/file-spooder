@@ -63,7 +63,7 @@ export default {
         return new Response("File too large. Maximum size is " + fmtSize(MAX_FILE_SIZE), { status: 413 });
       }
 
-      const currentPrefix = path.endsWith("/") ? path.slice(1) : "";
+      const currentPrefix = path.endsWith("/") ? decodeURIComponent(path.slice(1)) : "";
       const key = currentPrefix + nameCheck.sanitized;
       const arrayBuffer = await file.arrayBuffer();
 
@@ -135,7 +135,7 @@ export default {
 
     // === DIRECTORY LISTING ===
     if (path === "/" || path.endsWith("/")) {
-      const prefix = path === "/" ? "" : path.slice(1);
+      const prefix = path === "/" ? "" : decodeURIComponent(path.slice(1));
 
       // Paginate listing so >1000 items are not silently truncated
       const prefixes = [];
@@ -734,6 +734,55 @@ document.querySelectorAll('.menu-btn:not(.folder-menu-btn)').forEach((btn) => {
       });
     };
     menu.appendChild(copyLinkItem);
+
+    // QR Code
+    const qrItem = document.createElement('button');
+    qrItem.className = 'dropdown-item';
+    qrItem.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="14" y="3" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="14" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="14" y="14" width="4" height="4" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="19" y="19" width="2" height="2" fill="currentColor"/></svg> QR Code';
+    qrItem.onclick = () => {
+      menu.remove();
+      const downloadUrl = window.location.origin + viewUrl + '?download=1';
+      const qrSrc = 'https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=' + encodeURIComponent(downloadUrl);
+      
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay';
+      
+      const modal = document.createElement('div');
+      modal.className = 'modal';
+      modal.style.textAlign = 'center';
+      
+      const title = document.createElement('div');
+      title.className = 'modal-title';
+      title.textContent = 'QR Code — ' + fileName;
+      modal.appendChild(title);
+      
+      const qrImg = document.createElement('img');
+      qrImg.src = qrSrc;
+      qrImg.alt = 'QR Code for ' + fileName;
+      qrImg.style.display = 'block';
+      qrImg.style.margin = '0 auto 16px';
+      qrImg.style.borderRadius = '8px';
+      qrImg.style.maxWidth = '100%';
+      modal.appendChild(qrImg);
+      
+      const hint = document.createElement('p');
+      hint.style.fontSize = '13px';
+      hint.style.color = 'var(--gray-500)';
+      hint.style.marginBottom = '16px';
+      hint.textContent = 'Scan to download instantly';
+      modal.appendChild(hint);
+      
+      const closeBtn = document.createElement('button');
+      closeBtn.className = 'modal-btn primary';
+      closeBtn.textContent = 'Close';
+      closeBtn.onclick = () => overlay.remove();
+      modal.appendChild(closeBtn);
+      
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    };
+    menu.appendChild(qrItem);
 
     const ext = key.split('.').pop().toLowerCase();
     const isVideo = ${JSON.stringify(VIDEO_EXTS)}.includes(ext);
@@ -1756,7 +1805,7 @@ document.addEventListener("keydown", (e) => {
     }
 
     // === FILE SERVING ===
-    const key = path.slice(1);
+    const key = decodeURIComponent(path.slice(1));
     const obj = await getObject(bucket, key);
     
     if (obj) {
