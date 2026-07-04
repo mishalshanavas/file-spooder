@@ -1,0 +1,24 @@
+{
+  "name": "file-spooder",
+  "version": "1.0.0",
+  "description": "this is a simple public file transfer setup using cloudflare workers and R2 for my personal shit :/",
+  "main": "worker.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mishalshanavas/file-spooder.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/mishalshanavas/file-spooder/issues"
+  },
+  "homepage": "https://github.com/mishalshanavas/file-spooder#readme",
+  "devDependencies": {
+    "wrangler": "^4.107.0"
+  }
+}

@@ -1,411 +1,136 @@
+import {
+  VIDEO_EXTS, AUDIO_EXTS,
+  MAX_FILE_SIZE, MAX_STORAGE_DISPLAY,
+  FOLDER_SENTINEL, LINK_EXTENSION, FILE_CACHE_MAX_AGE
+} from './src/config.js';
+import { fmtSize, toHref, escapeHtml, getFileExt, getFileIcon, sanitizeName, corsHeaders } from './src/utils.js';
+import { requireAuth } from './src/auth.js';
+import { putObject, getObject, deleteObjects, listObjects } from './src/r2.js';
+import { handleCreateLink } from './src/actions/createLink.js';
+import { handleRename } from './src/actions/rename.js';
+import { handleEditLink } from './src/actions/editLink.js';
+import { handleCreateFolder } from './src/actions/createFolder.js';
+import { handleRenameFolder } from './src/actions/renameFolder.js';
+import { handleCopyFile } from './src/actions/copyFile.js';
+import { handleMoveFile } from './src/actions/moveFile.js';
+import { handleListFolders } from './src/actions/listFolders.js';
+import { handleDeleteFolder } from './src/actions/deleteFolder.js';
+import { STYLES } from './src/ui/styles.js';
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     let path = url.pathname;
     if (!path.startsWith("/")) path = "/" + path;
 
-    // === CONFIG ===
-    const ADMIN_PASSWORD = env.ADMIN_PASSWORD;
+    // === R2 BUCKET REFERENCE ===
+    const bucket = env.R2_BUCKET;
 
-    // === HELPERS ===
-    function fmtSize(bytes) {
-      if (bytes === undefined || bytes === null) return "";
-      if (bytes === 0) return "0 B";
-      const units = ["B", "KB", "MB", "GB"];
-      let i = 0;
-      let v = Number(bytes);
-      while (v >= 1024 && i < units.length - 1) {
-        v /= 1024;
-        i++;
-      }
-      return `${Math.round(v * 10) / 10} ${units[i]}`;
-    }
-
-    const toHref = (s) => encodeURI(s);
-    const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (ch) => {
-      const map = {
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;"
-      };
-      return map[ch] || ch;
-    });
-
-    async function objectExists(key) {
-      if (typeof env.R2_BUCKET.head === "function") {
-        const head = await env.R2_BUCKET.head(key);
-        return !!head;
-      }
-      const obj = await env.R2_BUCKET.get(key);
-      return !!obj;
+    // Handle CORS preflight
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: corsHeaders() });
     }
 
     // === SERVER-SIDE ACTIONS ===
     // Create Link
     if (request.method === "POST" && url.searchParams.get("createLink") === "1") {
-      const pass = request.headers.get("x-password") || "";
-      if (pass !== ADMIN_PASSWORD) {
-        return new Response("Unauthorized", { status: 401 });
-      }
+      const authError = requireAuth(request, env);
+      if (authError) return authError;
 
       let data = {};
-      try {
-        data = await request.json();
-      } catch (e) {
-        return new Response("Bad JSON", { status: 400 });
-      }
+      try { data = await request.json(); } catch (e) { return new Response("Bad JSON", { status: 400 }); }
 
-
-      let targetUrl = data.url;
-      const linkName = data.name || "link";
-      if (!targetUrl) return new Response("No URL provided", { status: 400 });
-
-      // Auto-convert GitHub blob URLs to raw URLs
-      const githubBlobRegex = /^https:\/\/github\.com\/([^\/]+)\/([^\/]+)\/blob\/(.+)$/;
-      const match = targetUrl.match(githubBlobRegex);
-      if (match) {
-        // match[1]=user, match[2]=repo, match[3]=branch/path
-        targetUrl = `https://raw.githubusercontent.com/${match[1]}/${match[2]}/${match[3]}`;
-      }
-
-      // Ensure URL has a protocol
-      if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
-        targetUrl = "https://" + targetUrl;
-      }
-
-      const currentPrefix = path.endsWith("/") ? path.slice(1) : "";
-      const key = currentPrefix + linkName + ".link";
-
-      // Store the URL as a text file with .link extension
-      await env.R2_BUCKET.put(key, targetUrl, {
-        httpMetadata: { contentType: "text/plain" }
-      });
-
-      return new Response("OK", { status: 200 });
+      return handleCreateLink({ bucket, data, path });
     }
 
     // Upload
     if (request.method === "POST" && url.searchParams.get("upload") === "1") {
-      const pass = request.headers.get("x-password") || "";
-      if (pass !== ADMIN_PASSWORD) {
-        return new Response("Unauthorized", { status: 401 });
-      }
+      const authError = requireAuth(request, env);
+      if (authError) return authError;
 
       const form = await request.formData();
       const file = form.get("file");
       if (!file) return new Response("No file", { status: 400 });
 
+      // Validate filename
+      const nameCheck = sanitizeName(file.name);
+      if (!nameCheck.valid) {
+        return new Response(nameCheck.error, { status: 400 });
+      }
+
+      // Check file size server-side
+      if (file.size > MAX_FILE_SIZE) {
+        return new Response("File too large. Maximum size is " + fmtSize(MAX_FILE_SIZE), { status: 413 });
+      }
+
       const currentPrefix = path.endsWith("/") ? path.slice(1) : "";
-      const key = currentPrefix + file.name;
+      const key = currentPrefix + nameCheck.sanitized;
       const arrayBuffer = await file.arrayBuffer();
 
-      await env.R2_BUCKET.put(key, arrayBuffer, {
-        httpMetadata: { contentType: file.type }
-      });
+      await putObject(bucket, key, arrayBuffer, file.type);
 
       return new Response("OK", { status: 200 });
     }
 
-    // Rename or Delete
+    // Action dispatcher
     if (request.method === "POST" && url.searchParams.get("action")) {
       const action = url.searchParams.get("action");
 
-      const pass = request.headers.get("x-password") || "";
-      if (pass !== ADMIN_PASSWORD) {
-        return new Response("Unauthorized", { status: 401 });
-      }
+      const authError = requireAuth(request, env);
+      if (authError) return authError;
 
       let data = {};
-      try {
-        data = await request.json();
-      } catch (e) {
-        return new Response("Bad JSON", { status: 400 });
-      }
+      try { data = await request.json(); } catch (e) { return new Response("Bad JSON", { status: 400 }); }
 
-      if (action === "delete") {
-        const key = data.key;
-        if (!key) return new Response("No key", { status: 400 });
-        await env.R2_BUCKET.delete(key);
-        return new Response(JSON.stringify({ ok: true }), { 
-          headers: { "content-type": "application/json" } 
-        });
-      }
+      const ctx = { bucket, data, path };
 
-      if (action === "rename") {
-        const oldKey = data.key;
-        const newName = data.newName;
-        if (!oldKey || !newName) return new Response("Missing params", { status: 400 });
-
-        const folder = oldKey.includes("/") ? oldKey.slice(0, oldKey.lastIndexOf("/") + 1) : "";
-        const newKey = folder + newName;
-
-        if (newKey === oldKey) {
-          return new Response(JSON.stringify({ ok: true, newKey, noop: true }), {
-            headers: { "content-type": "application/json" }
-          });
+      let response;
+      switch (action) {
+        case "delete": {
+          if (!data.key) response = new Response("No key", { status: 400 });
+          else { await deleteObjects(bucket, data.key); response = new Response(JSON.stringify({ ok: true }), { headers: { "content-type": "application/json" } }); }
+          break;
         }
-
-        if (await objectExists(newKey)) {
-          return new Response("Destination already exists", { status: 409 });
-        }
-
-        const obj = await env.R2_BUCKET.get(oldKey);
-        if (!obj) return new Response("Not found", { status: 404 });
-
-        const arrayBuffer = await obj.arrayBuffer();
-        const ct = obj.httpMetadata?.contentType || "application/octet-stream";
-
-        await env.R2_BUCKET.put(newKey, arrayBuffer, { 
-          httpMetadata: { contentType: ct } 
-        });
-        await env.R2_BUCKET.delete(oldKey);
-
-        return new Response(JSON.stringify({ ok: true, newKey }), { 
-          headers: { "content-type": "application/json" } 
-        });
-      }
-
-      if (action === "editLink") {
-        const key = data.key;
-        let newUrl = data.url;
-        if (!key || !newUrl) return new Response("Missing params", { status: 400 });
-        if (!key.endsWith(".link")) return new Response("Not a link file", { status: 400 });
-
-        // Auto-convert GitHub blob URLs to raw URLs
-        const githubBlobRegex = /^https:\/\/github\.com\/([^\/]+)\/([^\/]+)\/blob\/(.+)$/;
-        const match = newUrl.match(githubBlobRegex);
-        if (match) {
-          newUrl = `https://raw.githubusercontent.com/${match[1]}/${match[2]}/${match[3]}`;
-        }
-
-        // Ensure URL has a protocol
-        if (!newUrl.startsWith("http://") && !newUrl.startsWith("https://")) {
-          newUrl = "https://" + newUrl;
-        }
-
-        await env.R2_BUCKET.put(key, newUrl, {
-          httpMetadata: { contentType: "text/plain" }
-        });
-
-        return new Response(JSON.stringify({ ok: true }), { 
-          headers: { "content-type": "application/json" } 
-        });
-      }
-
-      if (action === "getLink") {
-        const key = data.key;
-        if (!key) return new Response("No key", { status: 400 });
-        if (!key.endsWith(".link")) return new Response("Not a link file", { status: 400 });
-
-        const obj = await env.R2_BUCKET.get(key);
-        if (!obj) return new Response("Not found", { status: 404 });
-
-        const url = await obj.text();
-        return new Response(JSON.stringify({ ok: true, url }), { 
-          headers: { "content-type": "application/json" } 
-        });
-      }
-
-      if (action === "createFolder") {
-        const folderName = data.name;
-        if (!folderName) return new Response("No folder name", { status: 400 });
-        
-        // Sanitize folder name
-        const cleanName = folderName.trim().replace(/[\/\\]/g, "");
-        if (!cleanName) return new Response("Invalid folder name", { status: 400 });
-        
-        const currentPrefix = path.endsWith("/") ? path.slice(1) : "";
-        const key = currentPrefix + cleanName + "/.folder";
-        
-        // Create a placeholder file to make the folder exist
-        await env.R2_BUCKET.put(key, "", {
-          httpMetadata: { contentType: "text/plain" }
-        });
-        
-        return new Response(JSON.stringify({ ok: true }), { 
-          headers: { "content-type": "application/json" } 
-        });
-      }
-
-      if (action === "renameFolder") {
-        const oldPrefix = data.oldPrefix;
-        const newPrefix = data.newPrefix;
-        if (!oldPrefix || !newPrefix) return new Response("Missing params", { status: 400 });
-
-        if (oldPrefix === newPrefix) {
-          return new Response(JSON.stringify({ ok: true, noop: true }), {
-            headers: { "content-type": "application/json" }
-          });
-        }
-
-        let cursor = undefined;
-        do {
-          const list = await env.R2_BUCKET.list({ prefix: oldPrefix, cursor });
-          for (const obj of (list.objects || [])) {
-            const newKey = newPrefix + obj.key.slice(oldPrefix.length);
-            if (await objectExists(newKey)) {
-              return new Response("Destination already exists: " + newKey, { status: 409 });
-            }
+        case "rename": response = await handleRename(ctx); break;
+        case "editLink": response = await handleEditLink(ctx); break;
+        case "getLink": {
+          if (!data.key) response = new Response("No key", { status: 400 });
+          else if (!data.key.endsWith(LINK_EXTENSION)) response = new Response("Not a link file", { status: 400 });
+          else {
+            const linkObj = await getObject(bucket, data.key);
+            if (!linkObj) response = new Response("Not found", { status: 404 });
+            else { const linkUrl = await linkObj.text(); response = new Response(JSON.stringify({ ok: true, url: linkUrl }), { headers: { "content-type": "application/json" } }); }
           }
-          cursor = list.truncated ? list.cursor : undefined;
-        } while (cursor);
-
-        cursor = undefined;
-        const errors = [];
-        do {
-          const list = await env.R2_BUCKET.list({ prefix: oldPrefix, cursor });
-          for (const obj of (list.objects || [])) {
-            const newKey = newPrefix + obj.key.slice(oldPrefix.length);
-            try {
-              const src = await env.R2_BUCKET.get(obj.key);
-              if (src) {
-                const buf = await src.arrayBuffer();
-                await env.R2_BUCKET.put(newKey, buf, {
-                  httpMetadata: { contentType: src.httpMetadata?.contentType || "application/octet-stream" }
-                });
-                await env.R2_BUCKET.delete(obj.key);
-              }
-            } catch (e) {
-              errors.push(obj.key);
-            }
-          }
-          cursor = list.truncated ? list.cursor : undefined;
-        } while (cursor);
-
-        if (errors.length > 0) return new Response("Partial failure: " + errors.join(", "), { status: 500 });
-        return new Response(JSON.stringify({ ok: true }), {
-          headers: { "content-type": "application/json" }
-        });
-      }
-
-      if (action === "copyFile") {
-        const sourceKey = data.key;
-        const destFolder = data.destFolder || "";
-        if (!sourceKey) return new Response("No source key", { status: 400 });
-        
-        const obj = await env.R2_BUCKET.get(sourceKey);
-        if (!obj) return new Response("Source not found", { status: 404 });
-        
-        const fileName = sourceKey.split("/").pop();
-        const destKey = destFolder + fileName;
-
-        if (await objectExists(destKey)) {
-          return new Response("Destination already exists", { status: 409 });
+          break;
         }
-        
-        const arrayBuffer = await obj.arrayBuffer();
-        const ct = obj.httpMetadata?.contentType || "application/octet-stream";
-        
-        await env.R2_BUCKET.put(destKey, arrayBuffer, {
-          httpMetadata: { contentType: ct }
-        });
-        
-        return new Response(JSON.stringify({ ok: true, destKey }), {
-          headers: { "content-type": "application/json" }
-        });
-      }
-
-      if (action === "moveFile") {
-        const sourceKey = data.key;
-        const destFolder = data.destFolder || "";
-        if (!sourceKey) return new Response("No source key", { status: 400 });
-        
-        const obj = await env.R2_BUCKET.get(sourceKey);
-        if (!obj) return new Response("Source not found", { status: 404 });
-        
-        const fileName = sourceKey.split("/").pop();
-        const destKey = destFolder + fileName;
-
-        if (destKey === sourceKey) {
-          return new Response(JSON.stringify({ ok: true, destKey, noop: true }), {
-            headers: { "content-type": "application/json" }
-          });
-        }
-
-        if (await objectExists(destKey)) {
-          return new Response("Destination already exists", { status: 409 });
-        }
-        
-        const arrayBuffer = await obj.arrayBuffer();
-        const ct = obj.httpMetadata?.contentType || "application/octet-stream";
-        
-        await env.R2_BUCKET.put(destKey, arrayBuffer, {
-          httpMetadata: { contentType: ct }
-        });
-        await env.R2_BUCKET.delete(sourceKey);
-        
-        return new Response(JSON.stringify({ ok: true, destKey }), {
-          headers: { "content-type": "application/json" }
-        });
-      }
-
-      if (action === "listFolders") {
-        const folders = [{path: "", display: "/ (Root)"}];
-
-        async function collectPrefixes(prefix = "") {
-          const out = [];
+        case "createFolder": response = await handleCreateFolder(ctx); break;
+        case "renameFolder": response = await handleRenameFolder(ctx); break;
+        case "copyFile": response = await handleCopyFile(ctx); break;
+        case "moveFile": response = await handleMoveFile(ctx); break;
+        case "listFolders": response = await handleListFolders(ctx); break;
+        case "getStorageUsage": {
+          let totalSize = 0;
           let cursor = undefined;
           do {
-            const list = await env.R2_BUCKET.list({ prefix, delimiter: "/", cursor });
-            const prefixes = list.commonPrefixes || list.prefixes || [];
-            for (const p of prefixes) out.push(p);
+            const list = await listObjects(bucket, { cursor });
+            for (const obj of (list.objects || [])) totalSize += obj.size || 0;
             cursor = list.truncated ? list.cursor : undefined;
           } while (cursor);
-          return out;
+          response = new Response(JSON.stringify({ ok: true, totalSize }), { headers: { "content-type": "application/json" } });
+          break;
         }
-
-        async function listRecursive(prefix) {
-          const prefixes = await collectPrefixes(prefix);
-          for (const p of prefixes) {
-            folders.push({path: p, display: "/" + p});
-            await listRecursive(p);
-          }
-        }
-
-        const rootPrefixes = await collectPrefixes("");
-        for (const p of rootPrefixes) {
-          folders.push({path: p, display: "/" + p});
-          await listRecursive(p);
-        }
-        
-        return new Response(JSON.stringify({ ok: true, folders }), {
-          headers: { "content-type": "application/json" }
-        });
+        case "deleteFolder": response = await handleDeleteFolder(ctx); break;
+        default: response = new Response("Unknown action", { status: 400 }); break;
       }
 
-      if (action === "getStorageUsage") {
-        let totalSize = 0;
-        let cursor = undefined;
-        do {
-          const list = await env.R2_BUCKET.list({ cursor });
-          for (const obj of (list.objects || [])) totalSize += obj.size || 0;
-          cursor = list.truncated ? list.cursor : undefined;
-        } while (cursor);
-        return new Response(JSON.stringify({ ok: true, totalSize }), {
-          headers: { "content-type": "application/json" }
-        });
-      }
-
-      if (action === "deleteFolder") {
-        const folderPrefix = data.prefix;
-        if (!folderPrefix) return new Response("No prefix", { status: 400 });
-
-        let delCursor = undefined;
-        do {
-          const list = await env.R2_BUCKET.list({ prefix: folderPrefix, cursor: delCursor });
-          const keys = (list.objects || []).map(o => o.key);
-          if (keys.length > 0) await env.R2_BUCKET.delete(keys);
-          delCursor = list.truncated ? list.cursor : undefined;
-        } while (delCursor);
-
-        return new Response(JSON.stringify({ ok: true }), {
-          headers: { "content-type": "application/json" }
-        });
-      }
-
-      return new Response("Unknown action", { status: 400 });
+      // Add CORS headers to all action responses
+      const mergedHeaders = { ...corsHeaders() };
+      response.headers.forEach((value, key) => { mergedHeaders[key] = value; });
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: mergedHeaders
+      });
     }
 
     // === DIRECTORY LISTING ===
@@ -417,7 +142,7 @@ export default {
       const objects = [];
       let listCursor = undefined;
       do {
-        const list = await env.R2_BUCKET.list({ prefix, delimiter: "/", cursor: listCursor });
+        const list = await listObjects(bucket, { prefix, delimiter: "/", cursor: listCursor });
         for (const p of (list.commonPrefixes || list.prefixes || [])) {
           if (!prefixes.includes(p)) prefixes.push(p);
         }
@@ -431,946 +156,7 @@ export default {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Files - ${prefix || 'Root'}</title>
-<style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-
-:root { 
-  --bg: #0b0c0d; 
-  --card: #0f1112; 
-  --border: #1a1b1e;
-  --muted: #9aa4ad; 
-  --text: #e8eaed;
-  --accent: #3a9fd9;
-  --hover: rgba(255,255,255,0.04);
-}
-
-body { 
-  background: var(--bg); 
-  color: var(--text); 
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-  font-size: 14px;
-  line-height: 1.5;
-  padding: 8px;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-.container { 
-  max-width: 1200px; 
-  margin: 0 auto; 
-}
-
-/* Header */
-.header { 
-  display: flex; 
-  align-items: stretch; 
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 10px; 
-  padding: 10px;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  margin-bottom: 10px;
-}
-
-.header-left {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 0;
-  flex: 1;
-}
-
-.title { 
-  font-size: 16px; 
-  font-weight: 600;
-  color: var(--text);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.breadcrumb {
-  font-size: 13px;
-  color: var(--muted);
-  font-family: "SF Mono", Monaco, monospace;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.breadcrumb a {
-  color: var(--accent);
-  text-decoration: none;
-  transition: opacity 0.2s;
-}
-
-.breadcrumb a:hover {
-  opacity: 0.7;
-  text-decoration: underline;
-}
-
-.breadcrumb-sep {
-  color: var(--muted);
-  opacity: 0.5;
-}
-
-.controls { 
-  display: flex; 
-  flex-wrap: wrap;
-  gap: 8px; 
-  align-items: center;
-  width: 100%;
-}
-
-.search-box {
-  position: relative;
-  width: 100%;
-  max-width: 300px;
-}
-
-.search-box input { 
-  height: 36px; 
-  width: 100%; 
-  padding: 0 36px 0 12px; 
-  border-radius: 6px; 
-  background: var(--bg); 
-  border: 1px solid var(--border); 
-  color: var(--text); 
-  outline: none; 
-  font-size: 14px;
-  transition: border-color 0.2s;
-}
-
-.search-box input:focus {
-  border-color: var(--accent);
-}
-
-.search-close {
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  background: transparent;
-  border: none;
-  color: var(--muted);
-  cursor: pointer;
-  padding: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  transition: all 0.15s;
-}
-
-.search-close:hover {
-  background: var(--hover);
-  color: var(--accent);
-}
-
-.icon-only-btn {
-  padding: 0;
-  width: 36px;
-  min-width: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.icon-only-btn svg {
-  margin: 0 !important;
-}
-
-.search-icon {
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  pointer-events: none;
-  opacity: 0.5;
-}
-
-.sort-select {
-  height: 32px;
-  padding: 0 8px;
-  border-radius: 6px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  color: var(--text);
-  outline: none;
-  font-size: 13px;
-  cursor: pointer;
-  transition: border-color 0.2s;
-}
-
-.sort-select:focus {
-  border-color: var(--accent);
-}
-
-.btn { 
-  background: var(--card); 
-  color: var(--text); 
-  padding: 0 14px; 
-  height: 36px;
-  min-height: 40px;
-  border-radius: 6px; 
-  border: 1px solid var(--border); 
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
-  white-space: nowrap;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-  position: relative;
-}
-
-.add-btn-group {
-  position: relative;
-}
-
-.add-dropdown {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 4px);
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-  min-width: 180px;
-  z-index: 1000;
-  display: none;
-  overflow: hidden;
-}
-
-.add-dropdown.active {
-  display: block;
-  animation: scaleIn 0.15s ease-out;
-}
-
-.add-dropdown-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  color: var(--text);
-  cursor: pointer;
-  border: none;
-  background: transparent;
-  width: 100%;
-  text-align: left;
-  font-size: 13px;
-  transition: background 0.15s;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.add-dropdown-item:hover {
-  background: var(--hover);
-}
-
-.add-dropdown-item svg {
-  flex-shrink: 0;
-  opacity: 0.7;
-}
-
-.btn:hover { 
-  background: var(--hover); 
-  border-color: var(--accent);
-}
-
-/* Storage Meter */
-.storage-meter {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  width: 100%;
-  padding: 8px 12px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  order: -1;
-}
-
-.storage-text {
-  font-size: 11px;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.storage-bar {
-  height: 6px;
-  background: var(--border);
-  border-radius: 3px;
-  overflow: hidden;
-  position: relative;
-}
-
-.storage-bar-fill {
-  height: 100%;
-  background: linear-gradient(90deg, var(--accent), #5ab9ea);
-  border-radius: 3px;
-  transition: width 0.5s ease-out;
-}
-
-/* Bulk actions */
-.bulk-actions {
-  display: none;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
-  background: var(--card);
-  border: 1px solid var(--accent);
-  border-radius: 8px;
-  margin-bottom: 12px;
-}
-
-.bulk-actions.active {
-  display: flex;
-}
-
-.bulk-info {
-  color: var(--accent);
-  font-size: 14px;
-  font-weight: 600;
-  flex: 1;
-}
-
-.bulk-btn {
-  background: var(--card);
-  color: var(--text);
-  padding: 0 12px;
-  height: 32px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.bulk-btn:hover {
-  background: var(--hover);
-  border-color: var(--accent);
-}
-
-.bulk-btn.danger:hover {
-  border-color: #ff4d4d;
-  color: #ff4d4d;
-}
-
-/* Progress */
-.progress-wrap { 
-  width: 100%; 
-  margin-bottom: 12px; 
-  display: none; 
-  align-items: center; 
-  gap: 12px;
-  padding: 12px 16px;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-
-.progress { 
-  height: 6px; 
-  background: var(--bg); 
-  border-radius: 3px; 
-  overflow: hidden; 
-  flex: 1;
-}
-
-.progress-bar { 
-  height: 100%; 
-  width: 0%; 
-  background: var(--accent); 
-  transition: width 150ms linear;
-}
-
-.progress-text { 
-  min-width: 40px; 
-  text-align: right; 
-  color: var(--muted); 
-  font-size: 12px;
-  font-weight: 500;
-}
-
-/* Drop zone */
-.drop-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(58, 159, 217, 0.15);
-  border: 3px dashed var(--accent);
-  display: none;
-  align-items: center;
-  justify-content: center;
-  z-index: 3000;
-  pointer-events: none;
-}
-
-.drop-overlay.active {
-  display: flex;
-}
-
-.drop-message {
-  background: var(--card);
-  padding: 24px 48px;
-  border-radius: 12px;
-  border: 1px solid var(--accent);
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--accent);
-  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-}
-
-/* List */
-.list { 
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.item { 
-  display: flex; 
-  align-items: center; 
-  justify-content: space-between; 
-  gap: 10px; 
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-  transition: background 0.15s;
-  min-height: 48px;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.item:last-child {
-  border-bottom: none;
-}
-
-.item:hover { 
-  background: var(--hover);
-}
-
-.left { 
-  display: flex; 
-  align-items: center; 
-  gap: 10px;
-  min-width: 0;
-  flex: 1;
-}
-
-.icon {
-  flex-shrink: 0;
-  opacity: 0.7;
-}
-
-.file-checkbox {
-  width: 20px;
-  height: 20px;
-  min-width: 20px;
-  min-height: 20px;
-  cursor: pointer;
-  accent-color: var(--accent);
-  flex-shrink: 0;
-  -webkit-tap-highlight-color: transparent;
-  display: none;
-}
-
-.selection-mode .file-checkbox {
-  display: block;
-}
-
-.item.selected {
-  background: rgba(58, 159, 217, 0.1);
-  border-left: 3px solid var(--accent);
-}
-
-.thumb {
-  width: 32px;
-  height: 32px;
-  object-fit: cover;
-  border-radius: 4px;
-  flex-shrink: 0;
-  background: var(--bg);
-  border: 1px solid var(--border);
-}
-
-.name { 
-  font-family: "SF Mono", Monaco, "Courier New", monospace;
-  font-size: 13px;
-  color: var(--text); 
-  text-decoration: none;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.name:hover {
-  color: var(--accent);
-  text-decoration: underline;
-}
-
-.folder-name {
-  color: var(--accent);
-  font-weight: 500;
-}
-
-.right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-shrink: 0;
-}
-
-.meta { 
-  color: var(--muted); 
-  font-size: 12px;
-  min-width: 60px;
-  text-align: right;
-  font-family: "SF Mono", Monaco, monospace;
-}
-
-.actions {
-  position: relative;
-}
-
-.menu-btn {
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-  padding: 8px;
-  min-width: 36px;
-  min-height: 36px;
-  border-radius: 6px;
-  color: var(--muted);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.15s;
-  -webkit-tap-highlight-color: transparent;
-  touch-action: manipulation;
-}
-
-.menu-btn:hover {
-  background: var(--hover);
-  color: var(--accent);
-}
-
-.menu-btn svg {
-  pointer-events: none;
-}
-
-.dropdown-menu {
-  position: absolute;
-  right: 0;
-  top: 100%;
-  margin-top: 4px;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-  min-width: 160px;
-  z-index: 1000;
-  display: none;
-  overflow: hidden;
-}
-
-.dropdown-menu.active {
-  display: block;
-  animation: scaleIn 0.15s ease-out;
-}
-
-.dropdown-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  color: var(--text);
-  cursor: pointer;
-  border: none;
-  background: transparent;
-  width: 100%;
-  text-align: left;
-  font-size: 13px;
-  transition: background 0.15s;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.dropdown-item:hover {
-  background: var(--hover);
-}
-
-.dropdown-item svg {
-  flex-shrink: 0;
-  opacity: 0.7;
-}
-
-.dropdown-item.danger {
-  color: #ef4444;
-}
-
-.dropdown-item.danger:hover {
-  background: rgba(239, 68, 68, 0.1);
-}
-
-.icon-btn { 
-  background: transparent; 
-  border: 0; 
-  cursor: pointer; 
-  padding: 8px; 
-  min-width: 36px;
-  min-height: 36px;
-  border-radius: 6px; 
-  color: var(--muted);
-  display: none;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.15s;
-  -webkit-tap-highlight-color: transparent;
-  touch-action: manipulation;
-}
-
-.icon-btn:hover { 
-  background: var(--hover); 
-  color: var(--accent);
-}
-
-.empty-state {
-  padding: 48px 16px;
-  text-align: center;
-  color: var(--muted);
-}
-
-.empty-state-icon {
-  font-size: 48px;
-  margin-bottom: 12px;
-  opacity: 0.3;
-}
-
-/* Toast notifications */
-.toast {
-  position: fixed;
-  bottom: 24px;
-  right: 24px;
-  background: var(--card);
-  color: var(--text);
-  padding: 12px 20px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-  font-size: 14px;
-  z-index: 1000;
-  animation: slideIn 0.3s ease-out;
-  max-width: 400px;
-}
-
-.toast.success {
-  border-color: #1686c2ff;
-}
-
-.toast.error {
-  border-color: #ff4d4d;
-}
-
-/* Modal dialogs */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0,0,0,0.7);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 2000;
-  animation: fadeIn 0.2s ease-out;
-}
-
-.modal {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 24px;
-  min-width: 400px;
-  max-width: 90vw;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-  animation: scaleIn 0.2s ease-out;
-}
-
-.modal-title {
-  font-size: 18px;
-  font-weight: 600;
-  margin-bottom: 16px;
-  color: var(--text);
-}
-
-.modal-body {
-  margin-bottom: 20px;
-}
-
-.modal-input {
-  width: 100%;
-  padding: 10px 12px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
-  font-size: 14px;
-  outline: none;
-  margin-bottom: 12px;
-  font-family: "SF Mono", Monaco, monospace;
-}
-
-.modal-input[type="password"] {
-  border-color: #ff4d4d;
-}
-
-.modal-input:focus {
-  border-color: var(--accent);
-}
-
-.modal-input[type="password"]:focus {
-  border-color: #ff4d4d;
-}
-
-.modal-label {
-  display: block;
-  font-size: 13px;
-  color: var(--muted);
-  margin-bottom: 6px;
-  font-weight: 500;
-}
-
-.modal-buttons {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-}
-
-.modal-btn {
-  padding: 8px 16px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--card);
-  color: var(--text);
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 500;
-  transition: all 0.2s;
-}
-
-.modal-btn:hover {
-  background: var(--hover);
-}
-
-.modal-btn.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--bg);
-}
-
-.modal-btn.primary:hover {
-  opacity: 0.9;
-}
-
-/* Media Player Modal */
-.media-modal {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 24px;
-  max-width: 90vw;
-  max-height: 90vh;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-  animation: scaleIn 0.2s ease-out;
-}
-
-.media-modal video,
-.media-modal audio {
-  max-width: 100%;
-  max-height: 70vh;
-  border-radius: 8px;
-  background: #000;
-}
-
-.media-modal-title {
-  font-size: 18px;
-  font-weight: 600;
-  margin-bottom: 16px;
-  color: var(--text);
-  word-break: break-all;
-}
-
-.media-modal-close {
-  margin-top: 16px;
-  width: 100%;
-  padding: 10px;
-  background: var(--primary);
-  color: white;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: 500;
-}
-
-.media-modal-close:hover {
-  background: var(--primary-hover);
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes scaleIn {
-  from {
-    transform: scale(0.9);
-    opacity: 0;
-  }
-  to {
-    transform: scale(1);
-    opacity: 1;
-  }
-}
-
-@keyframes slideIn {
-  from {
-    transform: translateX(400px);
-    opacity: 0;
-  }
-  to {
-    transform: translateX(0);
-    opacity: 1;
-  }
-}
-
-@media (max-width: 640px) {
-  .header {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  
-  .controls {
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
-  }
-  
-  .btn {
-    flex: 1;
-    min-width: fit-content;
-  }
-  
-  .icon-only-btn {
-    width: 44px;
-    min-width: 44px;
-    height: 44px;
-    flex: 0;
-  }
-  
-  .sort-select {
-    flex: 1;
-    min-width: 120px;
-    height: 44px;
-  }
-  
-  .search-box {
-    width: 100%;
-    max-width: 100%;
-    order: 10;
-  }
-  
-  .search-box input {
-    height: 44px;
-    font-size: 16px;
-  }
-  
-  .actions {
-    flex-wrap: wrap;
-  }
-  
-  .icon-btn {
-    min-width: 40px;
-    min-height: 40px;
-  }
-  
-  .item {
-    padding: 14px 8px;
-  }
-  
-  .name {
-    font-size: 15px;
-  }
-  
-  .meta {
-    font-size: 12px;
-  }
-  
-  .modal {
-    min-width: 90vw;
-    padding: 16px;
-  }
-  
-  .modal-input {
-    font-size: 16px;
-    height: 44px;
-  }
-  
-  .modal-btn {
-    height: 44px;
-    font-size: 16px;
-  }
-  
-  .bulk-actions {
-    padding: 12px 8px;
-    gap: 8px;
-  }
-  
-  .bulk-btn {
-    font-size: 14px;
-    padding: 10px 14px;
-    height: 44px;
-  }
-}
-
-@media (min-width: 641px) {
-  body {
-    padding: 16px;
-  }
-  
-  .header-left {
-    flex-direction: row;
-    align-items: center;
-  }
-  
-  .controls {
-    width: auto;
-  }
-  
-  .btn {
-    flex: 0;
-  }
-  
-  .search-box {
-    flex: 0;
-    min-width: 200px;
-  }
-  
-  .storage-meter {
-    width: auto;
-    min-width: 200px;
-    order: 0;
-  }
-}
-</style>
+<style>${STYLES}</style>
 </head>
 <body>
 <div class="container">
@@ -1497,79 +283,12 @@ body {
       }
 
       // Files
-      const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'];
-      const videoExts = ['mp4', 'webm', 'mov', 'avi', 'mkv'];
-      const audioExts = ['mp3', 'wav', 'ogg', 'flac', 'm4a'];
-      const docExts = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'md'];
-      const archiveExts = ['zip', 'rar', '7z', 'tar', 'gz'];
-      const codeExts = ['js', 'ts', 'py', 'html', 'css', 'json', 'xml', 'yaml', 'yml'];
-
-      function getFileExt(filename) {
-        const parts = filename.split('.');
-        return parts.length > 1 ? parts.pop().toLowerCase() : '';
-      }
-
-      function getFileIcon(name, viewUrl) {
-        const ext = getFileExt(name);
-        
-        // Image files - show thumbnail
-        if (imageExts.includes(ext)) {
-          return `<img class="thumb" src="${viewUrl}" alt="" loading="lazy" onerror="this.outerHTML='<svg class=icon width=16 height=16 viewBox=\\'0 0 24 24\\' fill=none><rect x=3 y=3 width=18 height=18 rx=2 stroke=#3a9fd9 stroke-width=1.5/><circle cx=8.5 cy=8.5 r=1.5 fill=#3a9fd9/><path d=\\'M21 15l-5-5L5 21\\' stroke=#3a9fd9 stroke-width=1.5/></svg>'" />`;
-        }
-        
-        // Video files
-        if (videoExts.includes(ext)) {
-          return `<svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none">
-            <rect x="2" y="4" width="20" height="16" rx="2" stroke="#e57373" stroke-width="1.5"/>
-            <path d="M10 8l6 4-6 4V8z" fill="#e57373"/>
-          </svg>`;
-        }
-        
-        // Audio files
-        if (audioExts.includes(ext)) {
-          return `<svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none">
-            <path d="M9 18V5l12-2v13" stroke="#ba68c8" stroke-width="1.5"/>
-            <circle cx="6" cy="18" r="3" stroke="#ba68c8" stroke-width="1.5"/>
-            <circle cx="18" cy="16" r="3" stroke="#ba68c8" stroke-width="1.5"/>
-          </svg>`;
-        }
-        
-        // Document files
-        if (docExts.includes(ext)) {
-          return `<svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" stroke="#4fc3f7" stroke-width="1.5"/>
-            <path d="M14 2v6h6M8 13h8M8 17h8M8 9h2" stroke="#4fc3f7" stroke-width="1.5"/>
-          </svg>`;
-        }
-        
-        // Archive files
-        if (archiveExts.includes(ext)) {
-          return `<svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none">
-            <path d="M21 8v13H3V3h12l6 5z" stroke="#ffb74d" stroke-width="1.5"/>
-            <path d="M10 10h4v2h-4zM10 14h4v2h-4z" stroke="#ffb74d" stroke-width="1.5"/>
-          </svg>`;
-        }
-        
-        // Code files
-        if (codeExts.includes(ext)) {
-          return `<svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none">
-            <path d="M8 6l-6 6 6 6M16 6l6 6-6 6" stroke="#81c784" stroke-width="1.5"/>
-          </svg>`;
-        }
-        
-        // Default file icon
-        return `<svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" stroke="currentColor" stroke-width="1.5"/>
-          <path d="M14 2v6h6" stroke="currentColor" stroke-width="1.5"/>
-        </svg>`;
-      }
-
       let visibleFileCount = 0;
       for (const obj of objects) {
         const name = obj.key.replace(prefix, "");
-        if (name === ".folder") continue;  // skip folder sentinel files
+        if (name === "${FOLDER_SENTINEL}") continue;  // skip folder sentinel files
         visibleFileCount++;
-        const isLink = name.endsWith(".link");
+        const isLink = name.endsWith("${LINK_EXTENSION}");
         const viewUrl = "/" + obj.key;
         const downloadUrl = "/" + obj.key + "?download=1";
         const viewHref = toHref(viewUrl);
@@ -1668,8 +387,8 @@ async function loadStorageUsage() {
       
       const sizeStr = formatSize(totalSize);
       
-      // Assume a max of 10GB for visualization (adjust as needed)
-      const maxSize = 10 * 1024 * 1024 * 1024; // 10GB
+      // Storage visualization max
+      const maxSize = ${MAX_STORAGE_DISPLAY};
       const percentage = Math.min((totalSize / maxSize) * 100, 100);
       
       document.getElementById('storageText').textContent = 'Storage: ' + sizeStr;
@@ -2014,8 +733,8 @@ document.querySelectorAll('.menu-btn:not(.folder-menu-btn)').forEach((btn) => {
     menu.appendChild(copyLinkItem);
 
     const ext = key.split('.').pop().toLowerCase();
-    const isVideo = ['mp4', 'webm', 'mov', 'avi', 'mkv'].includes(ext);
-    const isAudio = ['mp3', 'wav', 'ogg', 'flac', 'm4a'].includes(ext);
+    const isVideo = ${JSON.stringify(VIDEO_EXTS)}.includes(ext);
+    const isAudio = ${JSON.stringify(AUDIO_EXTS)}.includes(ext);
 
     if (isVideo || isAudio) {
       const previewItem = document.createElement('button');
@@ -2407,7 +1126,7 @@ const progressWrap = document.getElementById("progressWrap");
 const progressBar = document.getElementById("progressBar");
 const progressText = document.getElementById("progressText");
 
-const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
+const MAX_FILE_SIZE = ${MAX_FILE_SIZE};
 
 function confirmLargeFiles(files) {
   const uploadable = [];
@@ -3037,35 +1756,52 @@ document.addEventListener("keydown", (e) => {
 </html>`;
 
       return new Response(html, { 
-        headers: { "content-type": "text/html; charset=utf-8" } 
+        headers: { ...corsHeaders(), "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=60" } 
       });
     }
 
     // === FILE SERVING ===
     const key = path.slice(1);
-    const obj = await env.R2_BUCKET.get(key);
+    const obj = await getObject(bucket, key);
     
     if (obj) {
       // Handle .link files - redirect to the stored URL
-      if (key.endsWith(".link")) {
+      if (key.endsWith(LINK_EXTENSION)) {
         try {
           const targetUrl = await obj.text();
           // Validate the URL before redirecting
           if (targetUrl && (targetUrl.startsWith("http://") || targetUrl.startsWith("https://"))) {
             return Response.redirect(targetUrl, 302);
           } else {
-            return new Response("Invalid link URL", { status: 400 });
+            return new Response("Invalid link URL", { status: 400, headers: corsHeaders() });
           }
         } catch (e) {
-          return new Response("Error reading link: " + e.message, { status: 500 });
+          return new Response("Error reading link", { status: 500, headers: corsHeaders() });
         }
       }
       
       const isDownload = url.searchParams.get("download") === "1";
+
+      // Handle conditional requests (304 Not Modified)
+      const ifNoneMatch = request.headers.get("If-None-Match");
+      if (ifNoneMatch && obj.httpEtag && ifNoneMatch === obj.httpEtag) {
+        return new Response(null, {
+          status: 304,
+          headers: {
+            ...corsHeaders(),
+            "etag": obj.httpEtag,
+            "cache-control": `public, max-age=${FILE_CACHE_MAX_AGE}`
+          }
+        });
+      }
+
       const headers = {
+        ...corsHeaders(),
         "content-type": obj.httpMetadata?.contentType || "application/octet-stream",
         "content-length": obj.size,
-        "cache-control": "public, max-age=3600"
+        "cache-control": `public, max-age=${FILE_CACHE_MAX_AGE}`,
+        "etag": obj.httpEtag || "",
+        "accept-ranges": "bytes"
       };
       
       if (isDownload) {
@@ -3078,7 +1814,7 @@ document.addEventListener("keydown", (e) => {
 
     // Folder without slash? Redirect
     const maybePrefix = key + "/";
-    const maybe = await env.R2_BUCKET.list({ prefix: maybePrefix, delimiter: "/" });
+    const maybe = await listObjects(bucket, { prefix: maybePrefix, delimiter: "/" });
     const hasFolder =
       (maybe.objects && maybe.objects.length > 0) ||
       (maybe.commonPrefixes && maybe.commonPrefixes.length > 0) ||
@@ -3088,6 +1824,6 @@ document.addEventListener("keydown", (e) => {
       return Response.redirect(url.origin + "/" + maybePrefix, 302);
     }
 
-    return new Response("Not found", { status: 404 });
+    return new Response("Not found", { status: 404, headers: corsHeaders() });
   }
 };
