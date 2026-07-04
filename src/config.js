@@ -3,8 +3,8 @@
  * Single source of truth for all configuration values.
  */
 
-// Maximum file upload size (100 MB)
-export const MAX_FILE_SIZE = 100 * 1024 * 1024;
+// Maximum file upload size (5 GB)
+export const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024;
 
 // Storage visualization max (10 GB)
 export const MAX_STORAGE_DISPLAY = 10 * 1024 * 1024 * 1024;

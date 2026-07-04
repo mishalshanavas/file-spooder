@@ -1148,7 +1148,7 @@ function confirmLargeFiles(files) {
     const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
     const confirmed = confirm(
       'Warning: The file "' + file.name + '" is ' + fileSizeMB +
-      ' MB, which exceeds the recommended limit of 100 MB.\\n\\n' +
+      ' MB, which exceeds the recommended limit of ${fmtSize(MAX_FILE_SIZE)}.\\n\\n' +
       'Large files may take longer to upload and could fail. Do you want to continue?'
     );
     if (confirmed) uploadable.push(file);
