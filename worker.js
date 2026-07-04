@@ -197,14 +197,6 @@ export default {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2"/></svg>
         </button>
       </div>
-      <select id="sortSelect" class="sort-select" aria-label="Sort files">
-        <option value="name-asc">Name (A-Z)</option>
-        <option value="name-desc">Name (Z-A)</option>
-        <option value="size-asc">Size (Small-Large)</option>
-        <option value="size-desc">Size (Large-Small)</option>
-        <option value="date-asc">Date (Old-New)</option>
-        <option value="date-desc">Date (New-Old)</option>
-      </select>
       <div class="add-btn-group">
         <button id="addBtn" class="btn" aria-haspopup="true">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -240,6 +232,16 @@ export default {
       <div class="col-type" role="columnheader">Type</div>
       <div class="col-size" role="columnheader">Size</div>
       <div class="col-modified" role="columnheader">Modified</div>
+      <div class="col-sort" role="columnheader">
+        <select id="sortSelect" aria-label="Sort files">
+          <option value="name-asc">Name ↑</option>
+          <option value="name-desc">Name ↓</option>
+          <option value="size-asc">Size ↑</option>
+          <option value="size-desc">Size ↓</option>
+          <option value="date-asc">Date ↑</option>
+          <option value="date-desc">Date ↓</option>
+        </select>
+      </div>
       <div class="col-actions" role="columnheader"></div>
     </div>
     <div id="list" role="rowgroup">`;
