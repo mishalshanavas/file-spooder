@@ -290,8 +290,6 @@ export default {
         const safeName = escapeHtml(name);
         const safeNameLower = escapeHtml(name.toLowerCase());
         const safeKey = escapeHtml(obj.key);
-        const safeViewHref = escapeHtml(viewHref);
-        const safeDownloadHref = escapeHtml(downloadHref);
         const ext = getFileExt(name);
         const typeLabel = isLink ? "Link" : (ext ? ext.toUpperCase() : "File");
         const uploadedDate = obj.uploaded ? new Date(obj.uploaded).toLocaleDateString() : "";
@@ -310,14 +308,14 @@ export default {
   </div>
   <div class="left" role="cell">
     ${iconHtml}
-    <a class="name" href="${isLink ? safeViewHref : safeDownloadHref}">${safeName}</a>
+    <a class="name" href="${isLink ? viewHref : downloadHref}">${safeName}</a>
   </div>
   <div class="col-type" role="cell"><span class="meta">${typeLabel}</span></div>
   <div class="col-size" role="cell"><span class="meta">${sizeText}</span></div>
   <div class="col-modified" role="cell"><span class="meta">${uploadedDate}</span></div>
   <div class="col-actions" role="cell">
     <div class="actions">
-      <button class="menu-btn" data-key="${safeKey}" data-is-link="${isLink}" data-view-url="${safeViewHref}" aria-label="File actions">
+      <button class="menu-btn" data-key="${safeKey}" data-is-link="${isLink}" data-view-url="${viewHref}" aria-label="File actions">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <circle cx="12" cy="5" r="2" fill="currentColor"/><circle cx="12" cy="12" r="2" fill="currentColor"/><circle cx="12" cy="19" r="2" fill="currentColor"/>
         </svg>
