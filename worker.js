@@ -1017,10 +1017,11 @@ searchClose.addEventListener("click", () => {
   q.focus();
 });
 
-// Search filtering
+// Search filtering + close button toggle
 const items = document.querySelectorAll(".item");
 q.addEventListener("input", () => {
   const v = q.value.trim().toLowerCase();
+  searchClose.hidden = !v;
   items.forEach(el => {
     const ok = !v || (el.dataset.name || "").includes(v);
     el.style.display = ok ? "flex" : "none";
