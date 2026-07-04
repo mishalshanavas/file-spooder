@@ -65,9 +65,9 @@ export default {
 
       const currentPrefix = path.endsWith("/") ? decodeURIComponent(path.slice(1)) : "";
       const key = currentPrefix + nameCheck.sanitized;
-      const arrayBuffer = await file.arrayBuffer();
 
-      await putObject(bucket, key, arrayBuffer, file.type);
+      // Stream directly to R2 — avoids double-buffering
+      await putObject(bucket, key, file.stream(), file.type || "application/octet-stream");
 
       return new Response("OK", { status: 200, headers: corsHeaders() });
     }
@@ -120,6 +120,40 @@ export default {
           break;
         }
         case "deleteFolder": response = await handleDeleteFolder(ctx); break;
+        // ── Multipart upload for large files ──
+        case "multipartStart": {
+          const mKey = data.key; const mType = data.contentType || "application/octet-stream";
+          if (!mKey) { response = new Response("No key", { status: 400 }); break; }
+          const mpu = await bucket.createMultipartUpload(mKey, { httpMetadata: { contentType: mType } });
+          response = new Response(JSON.stringify({ ok: true, uploadId: mpu.uploadId }), { headers: { "content-type": "application/json" } });
+          break;
+        }
+        case "multipartPart": {
+          const mpForm = await request.formData();
+          const mpUploadId = mpForm.get("uploadId"); const mpKey = mpForm.get("key");
+          const mpPart = parseInt(mpForm.get("partNumber")); const mpChunk = mpForm.get("chunk");
+          if (!mpUploadId || !mpKey || !mpPart || !mpChunk) { response = new Response("Missing params", { status: 400 }); break; }
+          const mpu = bucket.resumeMultipartUpload(mpKey, mpUploadId);
+          const uploadedPart = await mpu.uploadPart(mpPart, mpChunk.stream());
+          response = new Response(JSON.stringify({ ok: true, partNumber: mpPart, etag: uploadedPart.etag }), { headers: { "content-type": "application/json" } });
+          break;
+        }
+        case "multipartComplete": {
+          const mcKey = data.key; const mcUploadId = data.uploadId; const mcParts = data.parts;
+          if (!mcKey || !mcUploadId || !mcParts) { response = new Response("Missing params", { status: 400 }); break; }
+          const mpu = bucket.resumeMultipartUpload(mcKey, mcUploadId);
+          await mpu.complete(mcParts);
+          response = new Response(JSON.stringify({ ok: true }), { headers: { "content-type": "application/json" } });
+          break;
+        }
+        case "multipartAbort": {
+          const maKey = data.key; const maUploadId = data.uploadId;
+          if (!maKey || !maUploadId) { response = new Response("Missing params", { status: 400 }); break; }
+          const mpu = bucket.resumeMultipartUpload(maKey, maUploadId);
+          await mpu.abort();
+          response = new Response(JSON.stringify({ ok: true }), { headers: { "content-type": "application/json" } });
+          break;
+        }
         default: response = new Response("Unknown action", { status: 400 }); break;
       }
 
@@ -1170,6 +1204,57 @@ function uploadFilesBatch(inputFiles) {
     progressBar.style.width = '0%';
     progressText.textContent = '0/' + total;
 
+    // Chunked multipart upload for large files (>50MB)
+    const CHUNK_SIZE = 25 * 1024 * 1024; // 25MB chunks
+    const MULTIPART_THRESHOLD = 50 * 1024 * 1024; // Use multipart for >50MB
+
+    async function uploadFileMultipart(file, password) {
+      const currentPrefix = window.location.pathname.endsWith('/') ? window.location.pathname.slice(1) : '';
+      const key = currentPrefix + file.name;
+      const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+      const parts = [];
+
+      // Step 1: Create multipart upload
+      const startRes = await fetch(window.location.pathname + '?action=multipartStart', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-password': password },
+        body: JSON.stringify({ key, contentType: file.type || 'application/octet-stream' })
+      });
+      if (!startRes.ok) throw new Error('Failed to start multipart upload');
+      const { uploadId } = await startRes.json();
+
+      // Step 2: Upload each chunk
+      for (let i = 0; i < totalChunks; i++) {
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, file.size);
+        const chunk = file.slice(start, end);
+        const fd = new FormData();
+        fd.append('uploadId', uploadId);
+        fd.append('key', key);
+        fd.append('partNumber', String(i + 1));
+        fd.append('chunk', chunk, 'chunk');
+
+        const partRes = await fetch(window.location.pathname + '?action=multipartPart', {
+          method: 'POST', headers: { 'x-password': password }, body: fd
+        });
+        if (!partRes.ok) throw new Error('Failed to upload part ' + (i + 1));
+        const partData = await partRes.json();
+        parts.push({ partNumber: partData.partNumber, etag: partData.etag });
+
+        // Update progress
+        const pct = Math.round(((i + 1) / totalChunks) * 100);
+        progressBar.style.width = pct + '%';
+        progressText.textContent = 'Chunk ' + (i + 1) + '/' + totalChunks;
+      }
+
+      // Step 3: Complete multipart upload
+      parts.sort((a, b) => a.partNumber - b.partNumber);
+      const completeRes = await fetch(window.location.pathname + '?action=multipartComplete', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-password': password },
+        body: JSON.stringify({ key, uploadId, parts })
+      });
+      if (!completeRes.ok) throw new Error('Failed to complete upload');
+    }
+
     async function uploadNext(index) {
       if (index >= files.length) {
         setTimeout(() => {
@@ -1189,6 +1274,24 @@ function uploadFilesBatch(inputFiles) {
       }
 
       const file = files[index];
+
+      // Use multipart for large files
+      if (file.size > MULTIPART_THRESHOLD) {
+        try {
+          await uploadFileMultipart(file, password);
+          completed++;
+        } catch (err) {
+          console.error('Multipart upload failed:', err);
+          failed++;
+        }
+        const progress = Math.round(((completed + failed) / total) * 100);
+        progressBar.style.width = progress + '%';
+        progressText.textContent = (completed + failed) + '/' + total;
+        uploadNext(index + 1);
+        return;
+      }
+
+      // Regular upload for smaller files
       const xhr = new XMLHttpRequest();
       xhr.open('POST', window.location.pathname + '?upload=1', true);
       xhr.setRequestHeader('x-password', password);
