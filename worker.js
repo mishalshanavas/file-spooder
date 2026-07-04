@@ -1664,7 +1664,7 @@ document.querySelectorAll('.folder-menu-btn').forEach((btn) => {
       menu.remove();
       showModal('Rename Folder', [{ label: 'New name', value: display, placeholder: 'folder-name' }], (newName) => {
         if (!newName || newName === display) return;
-        const cleanNew = newName.trim().replace(/[\/\\]/g, '');
+        const cleanNew = newName.trim().replace(/[\\/\\\\]/g, '');
         if (!cleanNew) { showToast('Invalid folder name', 'error'); return; }
         askPassword(async (password) => {
           const parentPrefix = prefix.slice(0, prefix.length - display.length - 1);
