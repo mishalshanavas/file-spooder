@@ -151,27 +151,27 @@ export default {
       } while (listCursor);
 
       let html = `<!doctype html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Files - ${prefix || 'Root'}</title>
+<title>Files — ${prefix || 'Root'}</title>
 <style>${STYLES}</style>
 </head>
 <body>
 <div class="container">
-  <div class="header">
+  <header class="header" role="banner">
     <div class="header-left">
-      <div class="title">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+      <div class="title" aria-label="File Manager">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path d="M3 7h6l2 2h10v10c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V7z" stroke="currentColor" stroke-width="1.5"/>
         </svg>
-        Public Files
+        Files
       </div>
-      <div class="breadcrumb">`;
+      <nav class="breadcrumb" aria-label="Breadcrumb">`;
       
       // Generate clickable breadcrumb
-      html += `<a href="/">/</a>`;
+      html += `<a href="/" aria-label="Root">/</a>`;
       if (prefix) {
         const parts = prefix.split('/').filter(p => p);
         let accumulated = '';
@@ -179,40 +179,26 @@ export default {
           accumulated += part + '/';
           const partText = escapeHtml(part);
           const partHref = toHref('/' + accumulated);
-          html += `<span class="breadcrumb-sep">/</span>`;
+          html += `<span class="breadcrumb-sep" aria-hidden="true">/</span>`;
           if (i < parts.length - 1) {
             html += `<a href="${partHref}">${partText}</a>`;
           } else {
-            html += `<span>${partText}</span>`;
+            html += `<span aria-current="page">${partText}</span>`;
           }
         });
       }
       
-      html += `</div>
+      html += `</nav>
     </div>
 
     <div class="controls">
-      <div class="storage-meter" id="storageMeter" style="display: none;">
-        <div class="storage-text" id="storageText">Loading...</div>
-        <div class="storage-bar">
-          <div class="storage-bar-fill" id="storageFill" style="width: 0%"></div>
-        </div>
-      </div>
-      <button id="searchToggle" class="btn icon-only-btn" title="Search">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-          <circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="2"/>
-          <path d="M21 21l-4.35-4.35" stroke="currentColor" stroke-width="2"/>
-        </svg>
-      </button>
-      <div class="search-box" id="searchBox" style="display: none;">
-        <input id="q" placeholder="Search..." />
-        <button class="search-close" id="searchClose">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-            <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2"/>
-          </svg>
+      <div class="search-box" id="searchBox">
+        <input id="q" type="search" placeholder="Search files..." aria-label="Search files" autocomplete="off" />
+        <button class="search-close" id="searchClose" aria-label="Clear search">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2"/></svg>
         </button>
       </div>
-      <select id="sortSelect" class="sort-select">
+      <select id="sortSelect" class="sort-select" aria-label="Sort files">
         <option value="name-asc">Name (A-Z)</option>
         <option value="name-desc">Name (Z-A)</option>
         <option value="size-asc">Size (Small-Large)</option>
@@ -221,37 +207,43 @@ export default {
         <option value="date-desc">Date (New-Old)</option>
       </select>
       <div class="add-btn-group">
-        <button id="addBtn" class="btn">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="display:inline-block;vertical-align:middle;margin-right:6px;">
-            <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          </svg>
-          Add
+        <button id="addBtn" class="btn" aria-haspopup="true">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          New
         </button>
       </div>
-      <button id="uploadBtn" class="btn" style="display:none"></button>
-      <button id="createLinkBtn" class="btn" style="display:none"></button>
-      <button id="createFolderBtn" class="btn" style="display:none"></button>
+      <button id="uploadBtn" aria-label="Upload file" hidden></button>
+      <button id="createLinkBtn" aria-label="Create link" hidden></button>
+      <button id="createFolderBtn" aria-label="Create folder" hidden></button>
     </div>
-  </div>
+  </header>
 
-  <div id="bulkActions" class="bulk-actions">
+  <div id="bulkActions" class="bulk-actions" role="toolbar" aria-label="Bulk actions">
     <div class="bulk-info"><span id="selectedCount">0</span> selected</div>
     <button id="selectAllBtn" class="bulk-btn">Select All</button>
-    <button id="deselectAllBtn" class="bulk-btn">Deselect All</button>
+    <button id="deselectAllBtn" class="bulk-btn">Deselect</button>
     <button id="bulkDeleteBtn" class="bulk-btn danger">Delete Selected</button>
   </div>
 
-  <div id="dropOverlay" class="drop-overlay">
+  <div id="dropOverlay" class="drop-overlay" aria-hidden="true">
     <div class="drop-message">Drop files to upload</div>
   </div>
 
-  <div id="progressWrap" class="progress-wrap">
-    <div class="progress"><div id="progressBar" class="progress-bar"></div></div>
+  <div id="progressWrap" class="progress-wrap" aria-live="polite">
+    <div class="progress"><div id="progressBar" class="progress-bar" role="progressbar"></div></div>
     <div id="progressText" class="progress-text">0%</div>
   </div>
 
-  <div class="list">
-    <div id="list">`;
+  <div class="list" role="table" aria-label="File list">
+    <div class="list-header" role="row">
+      <div class="col-checkbox" role="columnheader"></div>
+      <div class="col-name" role="columnheader" aria-sort="none">Name</div>
+      <div class="col-type" role="columnheader">Type</div>
+      <div class="col-size" role="columnheader">Size</div>
+      <div class="col-modified" role="columnheader">Modified</div>
+      <div class="col-actions" role="columnheader"></div>
+    </div>
+    <div id="list" role="rowgroup">`;
 
       // Folders first
       for (const p of prefixes) {
@@ -260,21 +252,22 @@ export default {
         const safeDisplay = escapeHtml(display);
         const safePrefix = escapeHtml(p);
         const safeDisplayLower = escapeHtml(display.toLowerCase());
-        html += `<div class="item folder" data-name="${safeDisplayLower}" data-prefix="${safePrefix}">
-  <div class="left">
-    <svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none">
-      <path d="M3 7h6l2 2h10v10c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V7z" stroke="#3a9fd9" stroke-width="1.5"/>
+        html += `<div class="item folder" data-name="${safeDisplayLower}" data-prefix="${safePrefix}" role="row">
+  <div class="col-checkbox" role="cell"></div>
+  <div class="left" role="cell">
+    <svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M3 7h6l2 2h10v10c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V7z" stroke="currentColor" stroke-width="1.5"/>
     </svg>
     <a class="name folder-name" href="${toHref(href)}">${safeDisplay}</a>
   </div>
-  <div class="right">
-    <div class="meta">—</div>
+  <div class="col-type" role="cell"><span class="meta">Folder</span></div>
+  <div class="col-size" role="cell"><span class="meta">—</span></div>
+  <div class="col-modified" role="cell"><span class="meta">—</span></div>
+  <div class="col-actions" role="cell">
     <div class="actions">
-      <button class="menu-btn folder-menu-btn" data-prefix="${safePrefix}" data-display="${safeDisplay}" title="Actions">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-          <circle cx="12" cy="5" r="2" fill="currentColor"/>
-          <circle cx="12" cy="12" r="2" fill="currentColor"/>
-          <circle cx="12" cy="19" r="2" fill="currentColor"/>
+      <button class="menu-btn folder-menu-btn" data-prefix="${safePrefix}" data-display="${safeDisplay}" aria-label="Folder actions">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="5" r="2" fill="currentColor"/><circle cx="12" cy="12" r="2" fill="currentColor"/><circle cx="12" cy="19" r="2" fill="currentColor"/>
         </svg>
       </button>
     </div>
@@ -286,7 +279,7 @@ export default {
       let visibleFileCount = 0;
       for (const obj of objects) {
         const name = obj.key.replace(prefix, "");
-        if (name === "${FOLDER_SENTINEL}") continue;  // skip folder sentinel files
+        if (name === "${FOLDER_SENTINEL}") continue;
         visibleFileCount++;
         const isLink = name.endsWith("${LINK_EXTENSION}");
         const viewUrl = "/" + obj.key;
@@ -299,56 +292,68 @@ export default {
         const safeKey = escapeHtml(obj.key);
         const safeViewHref = escapeHtml(viewHref);
         const safeDownloadHref = escapeHtml(downloadHref);
-        
-        // Format uploaded date
+        const ext = getFileExt(name);
+        const typeLabel = isLink ? "Link" : (ext ? ext.toUpperCase() : "File");
         const uploadedDate = obj.uploaded ? new Date(obj.uploaded).toLocaleDateString() : "";
         const uploadedTimestamp = obj.uploaded ? obj.uploaded.getTime() : 0;
 
         const iconHtml = isLink 
-          ? `<svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none">
-              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="#3a9fd9" stroke-width="1.5"/>
-              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke="#3a9fd9" stroke-width="1.5"/>
+          ? `<svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="currentColor" stroke-width="1.5"/>
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke="currentColor" stroke-width="1.5"/>
             </svg>`
           : getFileIcon(name, viewHref);
 
-        html += `<div class="item file" data-name="${safeNameLower}" data-key="${safeKey}" data-size="${obj.size || 0}" data-uploaded="${uploadedTimestamp}">
-  <div class="left">
-    <input type="checkbox" class="file-checkbox" data-key="${safeKey}" />
+        html += `<div class="item file" data-name="${safeNameLower}" data-key="${safeKey}" data-size="${obj.size || 0}" data-uploaded="${uploadedTimestamp}" role="row">
+  <div class="col-checkbox" role="cell">
+    <input type="checkbox" class="file-checkbox" data-key="${safeKey}" aria-label="Select ${safeName}" />
+  </div>
+  <div class="left" role="cell">
     ${iconHtml}
     <a class="name" href="${isLink ? safeViewHref : safeDownloadHref}">${safeName}</a>
   </div>
-  <div class="right">
-    <div class="meta">${sizeText}${uploadedDate ? ` • ${uploadedDate}` : ''}</div>
+  <div class="col-type" role="cell"><span class="meta">${typeLabel}</span></div>
+  <div class="col-size" role="cell"><span class="meta">${sizeText}</span></div>
+  <div class="col-modified" role="cell"><span class="meta">${uploadedDate}</span></div>
+  <div class="col-actions" role="cell">
     <div class="actions">
-      <button class="menu-btn" data-key="${safeKey}" data-is-link="${isLink}" data-view-url="${safeViewHref}" title="Actions">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-          <circle cx="12" cy="5" r="2" fill="currentColor"/>
-          <circle cx="12" cy="12" r="2" fill="currentColor"/>
-          <circle cx="12" cy="19" r="2" fill="currentColor"/>
+      <button class="menu-btn" data-key="${safeKey}" data-is-link="${isLink}" data-view-url="${safeViewHref}" aria-label="File actions">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="5" r="2" fill="currentColor"/><circle cx="12" cy="12" r="2" fill="currentColor"/><circle cx="12" cy="19" r="2" fill="currentColor"/>
         </svg>
       </button>
-      <button class="icon-btn edit-link-btn" data-key="${safeKey}" style="display:none"></button>
-      <button class="icon-btn rename-btn" data-key="${safeKey}" style="display:none"></button>
-      <button class="icon-btn copy-btn" data-key="${safeKey}" style="display:none"></button>
-      <button class="icon-btn move-btn" data-key="${safeKey}" style="display:none"></button>
-      <button class="icon-btn delete-btn" data-key="${safeKey}" style="display:none"></button>
+      <button class="icon-btn edit-link-btn" data-key="${safeKey}" hidden></button>
+      <button class="icon-btn rename-btn" data-key="${safeKey}" hidden></button>
+      <button class="icon-btn copy-btn" data-key="${safeKey}" hidden></button>
+      <button class="icon-btn move-btn" data-key="${safeKey}" hidden></button>
+      <button class="icon-btn delete-btn" data-key="${safeKey}" hidden></button>
     </div>
   </div>
 </div>`;
       }
 
       if (prefixes.length === 0 && visibleFileCount === 0) {
-        html += `<div class="empty-state">
-  <div class="empty-state-icon">📁</div>
-  <div>This folder is empty</div>
+        html += `<div class="empty-state" role="status">
+  <div class="empty-state-icon" aria-hidden="true">📁</div>
+  <p>This folder is empty</p>
+  <p style="font-size:13px;margin-top:4px;color:var(--gray-400)">Drop files or click <strong>New</strong> to get started</p>
 </div>`;
       }
 
       html += `</div>
-  </div>
+    </div>
+
+  <footer style="display:flex;align-items:center;justify-content:space-between;padding:10px 4px;font-size:12px;color:var(--gray-500);margin-top:8px">
+    <span id="itemCount">${visibleFileCount + prefixes.length} item${visibleFileCount + prefixes.length !== 1 ? 's' : ''}</span>
+    <div class="storage-meter" id="storageMeter" style="display:none">
+      <div class="storage-text" id="storageText">Loading...</div>
+      <div class="storage-bar"><div class="storage-bar-fill" id="storageFill" style="width:0%"></div></div>
+    </div>
+  </footer>
 </div>
 
 <script>
+
 // Fetch and display storage usage
 async function loadStorageUsage() {
   try {
@@ -960,26 +965,18 @@ bulkDeleteBtn.addEventListener("click", () => {
   });
 });
 
-// Search toggle
-const searchToggle = document.getElementById("searchToggle");
+// Search
 const searchBox = document.getElementById("searchBox");
 const searchClose = document.getElementById("searchClose");
 const q = document.getElementById("q");
 
-searchToggle.addEventListener("click", () => {
-  searchBox.style.display = "block";
-  searchToggle.style.display = "none";
+searchClose.addEventListener("click", () => {
+  q.value = "";
+  q.dispatchEvent(new Event("input"));
   q.focus();
 });
 
-searchClose.addEventListener("click", () => {
-  searchBox.style.display = "none";
-  searchToggle.style.display = "flex";
-  q.value = "";
-  q.dispatchEvent(new Event("input"));
-});
-
-// Search
+// Search filtering
 const items = document.querySelectorAll(".item");
 q.addEventListener("input", () => {
   const v = q.value.trim().toLowerCase();
