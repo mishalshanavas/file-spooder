@@ -218,7 +218,7 @@ export default {
 
   <div class="list" role="table" aria-label="File list">
     <div class="list-header" role="row">
-      <div class="col-checkbox" role="columnheader"></div>
+      <div class="col-checkbox" role="columnheader"><input type="checkbox" id="selectAllCheckbox" aria-label="Select all files" /></div>
       <div class="col-name" role="columnheader" aria-sort="none">Name</div>
       <div class="col-type" role="columnheader">Type</div>
       <div class="col-size" role="columnheader">Size</div>
@@ -645,46 +645,6 @@ document.addEventListener('click', (e) => {
   }
 });
 
-// Long press for selection mode
-let longPressTimer;
-let selectionMode = false;
-
-document.querySelectorAll('.item').forEach(item => {
-  const startLongPress = (e) => {
-    if (e.target.closest('.menu-btn') || e.target.closest('a')) return;
-    
-    longPressTimer = setTimeout(() => {
-      selectionMode = true;
-      document.body.classList.add('selection-mode');
-      const checkbox = item.querySelector('.file-checkbox');
-      if (checkbox) {
-        checkbox.checked = true;
-        checkbox.dispatchEvent(new Event('change'));
-      }
-    }, 500);
-  };
-  
-  const cancelLongPress = () => {
-    clearTimeout(longPressTimer);
-  };
-  
-  item.addEventListener('touchstart', startLongPress);
-  item.addEventListener('touchend', cancelLongPress);
-  item.addEventListener('touchmove', cancelLongPress);
-  item.addEventListener('mousedown', startLongPress);
-  item.addEventListener('mouseup', cancelLongPress);
-  item.addEventListener('mousemove', cancelLongPress);
-});
-
-// Exit selection mode when no items selected
-function checkSelectionMode() {
-  const anyChecked = Array.from(document.querySelectorAll('.file-checkbox')).some(cb => cb.checked);
-  if (!anyChecked && selectionMode) {
-    selectionMode = false;
-    document.body.classList.remove('selection-mode');
-  }
-}
-
 // Kebab menu functionality
 document.addEventListener('click', (e) => {
   // Close all dropdowns when clicking outside
@@ -933,31 +893,41 @@ function updateBulkUI() {
     bulkActions.classList.remove("active");
   }
   
-  // Update item styling
+  // Sync header checkbox
+  if (selectAllCheckbox) {
+    selectAllCheckbox.checked = checked.length > 0 && checked.length === checkboxes.length;
+    selectAllCheckbox.indeterminate = checked.length > 0 && checked.length < checkboxes.length;
+  }
+  
   checkboxes.forEach(cb => {
     const item = cb.closest(".item");
-    if (cb.checked) {
-      item.classList.add("selected");
-    } else {
-      item.classList.remove("selected");
-    }
+    if (cb.checked) item.classList.add("selected");
+    else item.classList.remove("selected");
   });
 }
 
 checkboxes.forEach(cb => {
-  cb.addEventListener("change", () => {
-    updateBulkUI();
-    checkSelectionMode();
-  });
+  cb.addEventListener("change", () => updateBulkUI());
 });
 
+// Select-all header checkbox
+const selectAllCheckbox = document.getElementById("selectAllCheckbox");
+if (selectAllCheckbox) {
+  selectAllCheckbox.addEventListener("change", () => {
+    document.querySelectorAll(".file-checkbox").forEach(cb => cb.checked = selectAllCheckbox.checked);
+    updateBulkUI();
+  });
+}
+
 selectAllBtn.addEventListener("click", () => {
-  checkboxes.forEach(cb => cb.checked = true);
+  document.querySelectorAll(".file-checkbox").forEach(cb => cb.checked = true);
+  if (selectAllCheckbox) selectAllCheckbox.checked = true;
   updateBulkUI();
 });
 
 deselectAllBtn.addEventListener("click", () => {
-  checkboxes.forEach(cb => cb.checked = false);
+  document.querySelectorAll(".file-checkbox").forEach(cb => cb.checked = false);
+  if (selectAllCheckbox) selectAllCheckbox.checked = false;
   updateBulkUI();
 });
 

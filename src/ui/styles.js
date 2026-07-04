@@ -51,7 +51,7 @@ body{font-family:var(--font);background:var(--bg-secondary);color:var(--text);li
 .btn svg,.bulk-btn svg{flex-shrink:0;opacity:.7}
 .btn-primary{background:var(--accent)!important;color:#fff!important;border-color:var(--accent)!important;font-weight:600}.btn-primary:hover{background:var(--blue-600)!important;border-color:var(--blue-600)!important}.btn-primary svg{opacity:1}
 #uploadBtn,#createLinkBtn,#createFolderBtn{display:none}
-.add-btn-group{position:relative}
+.add-btn-group{position:relative;z-index:2}
 .add-dropdown{position:absolute;right:0;top:calc(100% + 4px);background:var(--bg);border:1px solid var(--border-strong);border-radius:var(--radius);box-shadow:var(--shadow-md);min-width:170px;z-index:1000;display:none;overflow:hidden}
 .add-dropdown.active{display:block}
 .add-dropdown-item{display:flex;align-items:center;gap:8px;padding:8px 10px;color:var(--text);cursor:pointer;border:none;background:none;width:100%;text-align:left;font-size:12px;font-family:var(--font);transition:background .06s}
@@ -59,8 +59,8 @@ body{font-family:var(--font);background:var(--bg-secondary);color:var(--text);li
 .add-dropdown-item svg{color:var(--text-secondary);flex-shrink:0}
 
 /* ── Table ── */
-.list{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);overflow:visible}
-.list-body{overflow:hidden;border-radius:0 0 var(--radius) var(--radius)}
+.list{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);overflow:visible;position:relative;z-index:1}
+.list-body{overflow:visible}
 .list-header{display:flex;align-items:center;padding:0 8px;height:30px;background:var(--bg-secondary);border-bottom:1px solid var(--border);font-size:10px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.05em;user-select:none}
 .col-checkbox{width:32px;flex-shrink:0;display:flex;align-items:center;padding-left:4px}
 .col-name{flex:1;min-width:0;padding:0 4px;cursor:pointer;display:flex;align-items:center;gap:4px}
@@ -77,11 +77,12 @@ body{font-family:var(--font);background:var(--bg-secondary);color:var(--text);li
 
 /* ── Rows ── */
 .item{display:flex;align-items:center;padding:0 8px;min-height:32px;border-bottom:1px solid var(--bg-tertiary);transition:background .06s}
-.item:last-child{border-bottom:none}
+.item:last-child{border-bottom:none;border-radius:0 0 var(--radius) var(--radius)}
 .item:hover{background:var(--bg-secondary)}
-.item.selected{background:var(--accent-light)}
-.file-checkbox{width:14px;height:14px;cursor:pointer;accent-color:var(--accent);flex-shrink:0;display:none}
-.selection-mode .file-checkbox{display:block}
+.item.selected{background:var(--accent-light);border-left:2px solid var(--accent)}
+.item:has(.dropdown-menu.active){position:relative;z-index:10}
+.file-checkbox{width:14px;height:14px;cursor:pointer;accent-color:var(--accent);flex-shrink:0}
+#selectAllCheckbox{width:14px;height:14px;cursor:pointer;accent-color:var(--accent)}
 .left{display:flex;align-items:center;gap:6px;min-width:0;flex:1;padding:0 4px}
 .icon{flex-shrink:0;opacity:.6}
 .thumb{width:20px;height:20px;object-fit:cover;border-radius:3px;flex-shrink:0}
@@ -89,13 +90,13 @@ body{font-family:var(--font);background:var(--bg-secondary);color:var(--text);li
 .name:hover{color:var(--accent);text-decoration:underline}
 .folder-name{color:var(--accent);font-weight:500}
 .meta{color:var(--text-secondary);font-size:11px;font-family:var(--font-mono)}
-.actions{position:relative}
+.actions{position:relative;z-index:1}
 .menu-btn,.icon-btn{background:none;border:none;cursor:pointer;padding:4px;min-width:26px;min-height:26px;border-radius:var(--radius);color:var(--text-secondary);display:flex;align-items:center;justify-content:center;transition:all .06s}
 .menu-btn:hover,.icon-btn:hover{background:var(--bg-tertiary);color:var(--text)}
 .icon-btn{display:none}
 
 /* ── Dropdown / Kebab ── */
-.dropdown-menu{position:absolute;right:0;top:100%;margin-top:2px;background:var(--bg);border:1px solid var(--border-strong);border-radius:var(--radius);box-shadow:var(--shadow-md);min-width:150px;z-index:1000;display:none;overflow:hidden}
+.dropdown-menu{position:absolute;right:0;top:100%;margin-top:2px;background:var(--bg);border:1px solid var(--border-strong);border-radius:var(--radius);box-shadow:var(--shadow-md);min-width:150px;z-index:100;display:none;overflow:hidden}
 .dropdown-menu.active{display:block}
 .dropdown-item{display:flex;align-items:center;gap:8px;padding:7px 10px;color:var(--text);cursor:pointer;border:none;background:var(--bg);width:100%;text-align:left;font-size:12px;font-family:var(--font);transition:background .06s}
 .dropdown-item:hover{background:var(--bg-tertiary)}
