@@ -1136,7 +1136,7 @@ function confirmLargeFiles(files) {
     const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
     const confirmed = confirm(
       'Warning: The file "' + file.name + '" is ' + fileSizeMB +
-      ' MB, which exceeds the recommended limit of 100 MB.\n\n' +
+      ' MB, which exceeds the recommended limit of 100 MB.\\n\\n' +
       'Large files may take longer to upload and could fail. Do you want to continue?'
     );
     if (confirmed) uploadable.push(file);
@@ -1609,7 +1609,7 @@ document.querySelectorAll(".delete-btn").forEach((btn) => {
     const key = btn.getAttribute("data-key");
     const filename = key.split("/").pop();
 
-    showConfirm("Delete File", "Delete \"" + filename + "\"? This cannot be undone.", () => {
+    showConfirm("Delete File", "Delete \\\"" + filename + "\\\"? This cannot be undone.", () => {
       askPassword(async (password) => {
         try {
           const res = await fetch(window.location.pathname + "?action=delete", {
