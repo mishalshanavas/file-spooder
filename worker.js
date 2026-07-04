@@ -160,17 +160,13 @@ export default {
 </head>
 <body>
 <div class="container">
-  <header class="header" role="banner">
-    <div class="header-left">
-      <div class="title" aria-label="File Manager">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M3 7h6l2 2h10v10c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V7z" stroke="currentColor" stroke-width="1.5"/>
-        </svg>
-      </div>
-      <nav class="breadcrumb" aria-label="Breadcrumb">`;
+  <header class="topbar" role="banner">
+    <a href="/" class="topbar-home" aria-label="Root">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 7h6l2 2h10v10c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V7z" stroke="currentColor" stroke-width="1.5"/></svg>
+    </a>
+    <nav class="topbar-crumbs" aria-label="Breadcrumb">`;
       
-      // Generate clickable breadcrumb
-      html += `<a href="/" aria-label="Root">/</a>`;
+      html += `<span class="crumb"><a href="/">Files</a></span>`;
       if (prefix) {
         const parts = prefix.split('/').filter(p => p);
         let accumulated = '';
@@ -178,29 +174,24 @@ export default {
           accumulated += part + '/';
           const partText = escapeHtml(part);
           const partHref = toHref('/' + accumulated);
-          html += `<span class="breadcrumb-sep" aria-hidden="true">/</span>`;
-          if (i < parts.length - 1) {
-            html += `<a href="${partHref}">${partText}</a>`;
-          } else {
-            html += `<span aria-current="page">${partText}</span>`;
-          }
+          html += `<span class="crumb-sep" aria-hidden="true">/</span>`;
+          html += `<span class="crumb"><a href="${partHref}">${partText}</a></span>`;
         });
       }
       
       html += `</nav>
-    </div>
-
-    <div class="controls">
+    <div class="topbar-actions">
       <div class="search-box" id="searchBox">
-        <input id="q" type="search" placeholder="Search files..." aria-label="Search files" autocomplete="off" />
-        <button class="search-close" id="searchClose" aria-label="Clear search">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2"/></svg>
+        <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="2"/><path d="M21 21l-4.35-4.35" stroke="currentColor" stroke-width="2"/></svg>
+        <input id="q" type="search" placeholder="Filter files…" aria-label="Filter files" autocomplete="off" />
+        <button class="search-close" id="searchClose" aria-label="Clear" hidden>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2"/></svg>
         </button>
       </div>
       <div class="add-btn-group">
-        <button id="addBtn" class="btn" aria-haspopup="true">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-          New
+        <button id="addBtn" class="btn btn-primary" aria-haspopup="true">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <span class="add-label">New</span>
         </button>
       </div>
       <button id="uploadBtn" aria-label="Upload file" hidden></button>
@@ -244,6 +235,7 @@ export default {
       </div>
       <div class="col-actions" role="columnheader"></div>
     </div>
+    <div class="list-body">
     <div id="list" role="rowgroup">`;
 
       // Folders first
@@ -340,6 +332,7 @@ export default {
       }
 
       html += `</div>
+    </div>
     </div>
 
   <footer style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;font-size:11px;color:var(--text-secondary);margin-top:6px">
