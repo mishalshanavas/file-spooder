@@ -34,6 +34,21 @@ export function sanitizeName(name) {
   return { valid: true, sanitized };
 }
 
+/** Validate an existing R2 object key without modifying it. */
+export function isSafeObjectKey(key) {
+  if (typeof key !== "string" || !key) return false;
+  return key.split("/").every((part) => {
+    const result = sanitizeName(part);
+    return result.valid && result.sanitized === part;
+  });
+}
+
+/** Validate a folder prefix (empty is the root; non-root values end in '/'). */
+export function isSafeFolderPrefix(prefix) {
+  if (prefix === "") return true;
+  return typeof prefix === "string" && prefix.endsWith("/") && isSafeObjectKey(prefix.slice(0, -1));
+}
+
 /**
  * Generate standard CORS headers for public access.
  * @returns {object}

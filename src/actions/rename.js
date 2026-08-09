@@ -1,10 +1,10 @@
-import { objectExists, getObject, putObject, deleteObjects } from '../r2.js';
-import { sanitizeName } from '../utils.js';
+import { objectExists, getObject, putObject, deleteObjects, copyMetadata } from '../r2.js';
+import { sanitizeName, isSafeObjectKey } from '../utils.js';
 
 export async function handleRename({ bucket, data }) {
   const oldKey = data.key;
   const newName = data.newName;
-  if (!oldKey || !newName) return new Response("Missing params", { status: 400 });
+  if (!isSafeObjectKey(oldKey) || !newName) return new Response("Missing params", { status: 400 });
 
   const nameCheck = sanitizeName(newName);
   if (!nameCheck.valid) return new Response(nameCheck.error, { status: 400 });
@@ -25,10 +25,8 @@ export async function handleRename({ bucket, data }) {
   const obj = await getObject(bucket, oldKey);
   if (!obj) return new Response("Not found", { status: 404 });
 
-  const arrayBuffer = await obj.arrayBuffer();
   const ct = obj.httpMetadata?.contentType || "application/octet-stream";
-
-  await putObject(bucket, newKey, arrayBuffer, ct);
+  await putObject(bucket, newKey, obj.body, ct, copyMetadata(obj));
   await deleteObjects(bucket, oldKey);
 
   return new Response(JSON.stringify({ ok: true, newKey }), {

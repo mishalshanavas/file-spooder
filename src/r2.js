@@ -22,12 +22,17 @@ export async function objectExists(bucket, key) {
  * @param {string} key
  * @param {ArrayBuffer|string|ReadableStream} body
  * @param {string} contentType
+ * @param {object} [sourceMetadata] - HTTP/custom metadata to retain when copying.
  * @returns {Promise<void>}
  */
-export async function putObject(bucket, key, body, contentType = "application/octet-stream") {
-  await bucket.put(key, body, {
-    httpMetadata: { contentType }
-  });
+export async function putObject(bucket, key, body, contentType = "application/octet-stream", sourceMetadata = {}) {
+  const options = {
+    ...sourceMetadata,
+    httpMetadata: { ...(sourceMetadata.httpMetadata || {}), contentType }
+  };
+  if (!sourceMetadata.customMetadata) delete options.customMetadata;
+  if (!sourceMetadata.storageClass) delete options.storageClass;
+  await bucket.put(key, body, options);
 }
 
 /**
@@ -36,8 +41,22 @@ export async function putObject(bucket, key, body, contentType = "application/oc
  * @param {string} key
  * @returns {Promise<R2Object|null>}
  */
-export async function getObject(bucket, key) {
-  return bucket.get(key);
+export async function getObject(bucket, key, options) {
+  return bucket.get(key, options);
+}
+
+/** Retrieve object metadata without downloading its body. */
+export async function headObject(bucket, key) {
+  return bucket.head(key);
+}
+
+/** Return metadata which can safely be carried forward during an R2 copy. */
+export function copyMetadata(object) {
+  return {
+    httpMetadata: object.httpMetadata,
+    customMetadata: object.customMetadata,
+    storageClass: object.storageClass
+  };
 }
 
 /**

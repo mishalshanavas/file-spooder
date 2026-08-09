@@ -11,7 +11,8 @@
  */
 export function requireAuth(request, env) {
   const pass = request.headers.get("x-password") || "";
-  if (pass !== env.ADMIN_PASSWORD) {
+  // Never treat a missing deployment secret as an empty valid password.
+  if (!env.ADMIN_PASSWORD || pass !== env.ADMIN_PASSWORD) {
     return new Response("Unauthorized", { status: 401 });
   }
   return null;

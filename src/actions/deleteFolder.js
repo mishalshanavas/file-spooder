@@ -1,8 +1,9 @@
 import { deleteObjects, listObjects } from '../r2.js';
+import { isSafeFolderPrefix } from '../utils.js';
 
 export async function handleDeleteFolder({ bucket, data }) {
   const folderPrefix = data.prefix;
-  if (!folderPrefix) return new Response("No prefix", { status: 400 });
+  if (!folderPrefix || !isSafeFolderPrefix(folderPrefix)) return new Response("Invalid prefix", { status: 400 });
 
   let delCursor = undefined;
   do {

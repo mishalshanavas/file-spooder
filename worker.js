@@ -1,11 +1,11 @@
 import {
   VIDEO_EXTS, AUDIO_EXTS,
-  MAX_FILE_SIZE, MAX_STORAGE_DISPLAY,
+  MAX_FILE_SIZE, MAX_STORAGE_DISPLAY, MAX_STORAGE_SCAN_OBJECTS,
   FOLDER_SENTINEL, LINK_EXTENSION, FILE_CACHE_MAX_AGE
 } from './src/config.js';
-import { fmtSize, toHref, escapeHtml, getFileExt, getFileIcon, sanitizeName, corsHeaders } from './src/utils.js';
+import { fmtSize, toHref, escapeHtml, getFileExt, getFileIcon, sanitizeName, isSafeObjectKey, corsHeaders } from './src/utils.js';
 import { requireAuth } from './src/auth.js';
-import { putObject, getObject, deleteObjects, listObjects } from './src/r2.js';
+import { putObject, getObject, headObject, deleteObjects, listObjects, objectExists } from './src/r2.js';
 import { handleCreateLink } from './src/actions/createLink.js';
 import { handleRename } from './src/actions/rename.js';
 import { handleEditLink } from './src/actions/editLink.js';
@@ -16,6 +16,38 @@ import { handleMoveFile } from './src/actions/moveFile.js';
 import { handleListFolders } from './src/actions/listFolders.js';
 import { handleDeleteFolder } from './src/actions/deleteFolder.js';
 import { STYLES } from './src/ui/styles.js';
+
+function parseSingleByteRange(header, size) {
+  if (!header) return null;
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!match || size <= 0) return { invalid: true };
+
+  const [, startText, endText] = match;
+  if (!startText && !endText) return { invalid: true };
+  let start;
+  let end;
+  if (!startText) {
+    const suffixLength = Number(endText);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return { invalid: true };
+    start = Math.max(0, size - suffixLength);
+    end = size - 1;
+  } else {
+    start = Number(startText);
+    end = endText ? Number(endText) : size - 1;
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start > end || start >= size) return { invalid: true };
+    end = Math.min(end, size - 1);
+  }
+  return { offset: start, length: end - start + 1, end };
+}
+
+function keyMatchesCurrentFolder(path, key) {
+  try {
+    const prefix = path.endsWith("/") ? decodeURIComponent(path.slice(1)) : "";
+    return isSafeObjectKey(key) && key.startsWith(prefix) && !key.slice(prefix.length).includes("/");
+  } catch {
+    return false;
+  }
+}
 
 export default {
   async fetch(request, env) {
@@ -48,9 +80,11 @@ export default {
       const authError = requireAuth(request, env);
       if (authError) return authError;
 
-      const form = await request.formData();
+      let form;
+      try { form = await request.formData(); }
+      catch (e) { return new Response("Invalid upload form", { status: 400, headers: corsHeaders() }); }
       const file = form.get("file");
-      if (!file) return new Response("No file", { status: 400 });
+      if (!(file instanceof File)) return new Response("No file", { status: 400 });
 
       // Validate filename
       const nameCheck = sanitizeName(file.name);
@@ -63,8 +97,13 @@ export default {
         return new Response("File too large. Maximum size is " + fmtSize(MAX_FILE_SIZE), { status: 413 });
       }
 
-      const currentPrefix = path.endsWith("/") ? decodeURIComponent(path.slice(1)) : "";
+      let currentPrefix;
+      try { currentPrefix = path.endsWith("/") ? decodeURIComponent(path.slice(1)) : ""; }
+      catch (e) { return new Response("Invalid path", { status: 400 }); }
       const key = currentPrefix + nameCheck.sanitized;
+      if (await objectExists(bucket, key)) {
+        return new Response("A file with this name already exists", { status: 409, headers: corsHeaders() });
+      }
 
       // Stream directly to R2 — avoids double-buffering
       await putObject(bucket, key, file.stream(), file.type || "application/octet-stream");
@@ -79,22 +118,29 @@ export default {
       const authError = requireAuth(request, env);
       if (authError) return authError;
 
+      // Multipart part requests are sent as FormData. Do not consume their body
+      // as JSON first: a Request body can only be read once.
       let data = {};
-      try { data = await request.json(); } catch (e) { return new Response("Bad JSON", { status: 400 }); }
+      if (action !== "multipartPart") {
+        try { data = await request.json(); } catch (e) { return new Response("Bad JSON", { status: 400 }); }
+        if (!data || typeof data !== "object" || Array.isArray(data)) {
+          return new Response("Bad JSON", { status: 400 });
+        }
+      }
 
       const ctx = { bucket, data, path };
 
       let response;
       switch (action) {
         case "delete": {
-          if (!data.key) response = new Response("No key", { status: 400 });
+          if (!isSafeObjectKey(data.key)) response = new Response("Invalid key", { status: 400 });
           else { await deleteObjects(bucket, data.key); response = new Response(JSON.stringify({ ok: true }), { headers: { "content-type": "application/json" } }); }
           break;
         }
         case "rename": response = await handleRename(ctx); break;
         case "editLink": response = await handleEditLink(ctx); break;
         case "getLink": {
-          if (!data.key) response = new Response("No key", { status: 400 });
+          if (!isSafeObjectKey(data.key)) response = new Response("Invalid key", { status: 400 });
           else if (!data.key.endsWith(LINK_EXTENSION)) response = new Response("Not a link file", { status: 400 });
           else {
             const linkObj = await getObject(bucket, data.key);
@@ -110,29 +156,57 @@ export default {
         case "listFolders": response = await handleListFolders(ctx); break;
         case "getStorageUsage": {
           let totalSize = 0;
+          let scannedObjects = 0;
+          let partial = false;
           let cursor = undefined;
           do {
-            const list = await listObjects(bucket, { cursor });
-            for (const obj of (list.objects || [])) totalSize += obj.size || 0;
+            const list = await listObjects(bucket, { cursor, limit: 1000 });
+            for (const obj of (list.objects || [])) {
+              totalSize += obj.size || 0;
+              scannedObjects++;
+              if (scannedObjects >= MAX_STORAGE_SCAN_OBJECTS) {
+                partial = true;
+                break;
+              }
+            }
             cursor = list.truncated ? list.cursor : undefined;
-          } while (cursor);
-          response = new Response(JSON.stringify({ ok: true, totalSize }), { headers: { "content-type": "application/json" } });
+          } while (cursor && !partial);
+          response = new Response(JSON.stringify({ ok: true, totalSize, partial, scannedObjects }), { headers: { "content-type": "application/json" } });
           break;
         }
         case "deleteFolder": response = await handleDeleteFolder(ctx); break;
         // ── Multipart upload for large files ──
         case "multipartStart": {
-          const mKey = data.key; const mType = data.contentType || "application/octet-stream";
-          if (!mKey) { response = new Response("No key", { status: 400 }); break; }
+          const nameCheck = sanitizeName(data.name);
+          if (!nameCheck.valid) { response = new Response(nameCheck.error, { status: 400 }); break; }
+          if (!Number.isSafeInteger(data.size) || data.size < 0 || data.size > MAX_FILE_SIZE) {
+            response = new Response("File too large. Maximum size is " + fmtSize(MAX_FILE_SIZE), { status: 413 }); break;
+          }
+          let currentPrefix;
+          try { currentPrefix = path.endsWith("/") ? decodeURIComponent(path.slice(1)) : ""; }
+          catch (e) { response = new Response("Invalid path", { status: 400 }); break; }
+          const mKey = currentPrefix + nameCheck.sanitized;
+          const mType = typeof data.contentType === "string" && data.contentType
+            ? data.contentType : "application/octet-stream";
+          if (await objectExists(bucket, mKey)) {
+            response = new Response("A file with this name already exists", { status: 409 }); break;
+          }
           const mpu = await bucket.createMultipartUpload(mKey, { httpMetadata: { contentType: mType } });
-          response = new Response(JSON.stringify({ ok: true, uploadId: mpu.uploadId }), { headers: { "content-type": "application/json" } });
+          response = new Response(JSON.stringify({ ok: true, key: mKey, uploadId: mpu.uploadId }), { headers: { "content-type": "application/json" } });
           break;
         }
         case "multipartPart": {
-          const mpForm = await request.formData();
+          let mpForm;
+          try { mpForm = await request.formData(); }
+          catch (e) { response = new Response("Invalid multipart form", { status: 400 }); break; }
           const mpUploadId = mpForm.get("uploadId"); const mpKey = mpForm.get("key");
           const mpPart = parseInt(mpForm.get("partNumber")); const mpChunk = mpForm.get("chunk");
-          if (!mpUploadId || !mpKey || !mpPart || !mpChunk) { response = new Response("Missing params", { status: 400 }); break; }
+          if (typeof mpUploadId !== "string" || typeof mpKey !== "string" || !Number.isInteger(mpPart) || mpPart < 1 || mpPart > 10_000 || !(mpChunk instanceof File)) {
+            response = new Response("Missing or invalid multipart parameters", { status: 400 }); break;
+          }
+          if (!keyMatchesCurrentFolder(path, mpKey)) {
+            response = new Response("Invalid multipart key", { status: 400 }); break;
+          }
           const mpu = bucket.resumeMultipartUpload(mpKey, mpUploadId);
           const uploadedPart = await mpu.uploadPart(mpPart, mpChunk.stream());
           response = new Response(JSON.stringify({ ok: true, partNumber: mpPart, etag: uploadedPart.etag }), { headers: { "content-type": "application/json" } });
@@ -140,7 +214,12 @@ export default {
         }
         case "multipartComplete": {
           const mcKey = data.key; const mcUploadId = data.uploadId; const mcParts = data.parts;
-          if (!mcKey || !mcUploadId || !mcParts) { response = new Response("Missing params", { status: 400 }); break; }
+          if (typeof mcKey !== "string" || typeof mcUploadId !== "string" || !Array.isArray(mcParts) || mcParts.length === 0) { response = new Response("Missing params", { status: 400 }); break; }
+          if (!keyMatchesCurrentFolder(path, mcKey)) { response = new Response("Invalid multipart key", { status: 400 }); break; }
+          const validParts = mcParts.length <= 10_000 && mcParts.every((part, index) =>
+            part && Number.isInteger(part.partNumber) && part.partNumber === index + 1 &&
+            typeof part.etag === "string" && part.etag.length > 0);
+          if (!validParts) { response = new Response("Invalid multipart parts", { status: 400 }); break; }
           const mpu = bucket.resumeMultipartUpload(mcKey, mcUploadId);
           await mpu.complete(mcParts);
           response = new Response(JSON.stringify({ ok: true }), { headers: { "content-type": "application/json" } });
@@ -148,7 +227,8 @@ export default {
         }
         case "multipartAbort": {
           const maKey = data.key; const maUploadId = data.uploadId;
-          if (!maKey || !maUploadId) { response = new Response("Missing params", { status: 400 }); break; }
+          if (typeof maKey !== "string" || typeof maUploadId !== "string") { response = new Response("Missing params", { status: 400 }); break; }
+          if (!keyMatchesCurrentFolder(path, maKey)) { response = new Response("Invalid multipart key", { status: 400 }); break; }
           const mpu = bucket.resumeMultipartUpload(maKey, maUploadId);
           await mpu.abort();
           response = new Response(JSON.stringify({ ok: true }), { headers: { "content-type": "application/json" } });
@@ -171,18 +251,15 @@ export default {
     if (path === "/" || path.endsWith("/")) {
       const prefix = path === "/" ? "" : decodeURIComponent(path.slice(1));
 
-      // Paginate listing so >1000 items are not silently truncated
+      // Render a bounded page. Loading every object into one HTML response does
+      // not scale for large folders and can exceed Worker limits.
       const prefixes = [];
       const objects = [];
-      let listCursor = undefined;
-      do {
-        const list = await listObjects(bucket, { prefix, delimiter: "/", cursor: listCursor });
-        for (const p of (list.delimitedPrefixes || [])) {
-          if (!prefixes.includes(p)) prefixes.push(p);
-        }
-        for (const o of (list.objects || [])) objects.push(o);
-        listCursor = list.truncated ? list.cursor : undefined;
-      } while (listCursor);
+      const listCursor = url.searchParams.get("cursor") || undefined;
+      const list = await listObjects(bucket, { prefix, delimiter: "/", cursor: listCursor, limit: 1000 });
+      for (const p of (list.delimitedPrefixes || [])) prefixes.push(p);
+      for (const o of (list.objects || [])) objects.push(o);
+      const nextCursor = list.truncated ? list.cursor : null;
 
       let html = `<!doctype html>
 <html lang="en">
@@ -371,6 +448,7 @@ export default {
 
   <footer style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;font-size:11px;color:var(--text-secondary);margin-top:6px">
     <span id="itemCount">${visibleFileCount + prefixes.length} item${visibleFileCount + prefixes.length !== 1 ? 's' : ''}</span>
+    ${nextCursor ? `<a class="name" href="?cursor=${encodeURIComponent(nextCursor)}">Next page →</a>` : ''}
     <div class="storage-meter" id="storageMeter" style="display:none">
       <div class="storage-text" id="storageText">Loading...</div>
       <div class="storage-bar"><div class="storage-bar-fill" id="storageFill" style="width:0%"></div></div>
@@ -422,7 +500,7 @@ async function loadStorageUsage() {
       const maxSize = ${MAX_STORAGE_DISPLAY};
       const percentage = Math.min((totalSize / maxSize) * 100, 100);
       
-      document.getElementById('storageText').textContent = 'Storage: ' + sizeStr;
+      document.getElementById('storageText').textContent = 'Storage: ' + (data.partial ? '≥ ' : '') + sizeStr;
       document.getElementById('storageFill').style.width = percentage + '%';
       document.getElementById('storageMeter').style.display = 'flex';
     }
@@ -1179,13 +1257,7 @@ function confirmLargeFiles(files) {
       continue;
     }
 
-    const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-    const confirmed = confirm(
-      'Warning: The file "' + file.name + '" is ' + fileSizeMB +
-      ' MB, which exceeds the recommended limit of ${fmtSize(MAX_FILE_SIZE)}.\\n\\n' +
-      'Large files may take longer to upload and could fail. Do you want to continue?'
-    );
-    if (confirmed) uploadable.push(file);
+    showToast('"' + file.name + '" exceeds the maximum upload size of ${fmtSize(MAX_FILE_SIZE)}', 'error');
   }
   return uploadable;
 }
@@ -1209,50 +1281,57 @@ function uploadFilesBatch(inputFiles) {
     const MULTIPART_THRESHOLD = 50 * 1024 * 1024; // Use multipart for >50MB
 
     async function uploadFileMultipart(file, password) {
-      const currentPrefix = window.location.pathname.endsWith('/') ? window.location.pathname.slice(1) : '';
-      const key = currentPrefix + file.name;
       const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
       const parts = [];
+      let uploadId;
+      let key;
 
       // Step 1: Create multipart upload
       const startRes = await fetch(window.location.pathname + '?action=multipartStart', {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'x-password': password },
-        body: JSON.stringify({ key, contentType: file.type || 'application/octet-stream' })
+        body: JSON.stringify({ name: file.name, size: file.size, contentType: file.type || 'application/octet-stream' })
       });
-      if (!startRes.ok) throw new Error('Failed to start multipart upload');
-      const { uploadId } = await startRes.json();
+      if (!startRes.ok) throw new Error(await startRes.text() || 'Failed to start multipart upload');
+      ({ uploadId, key } = await startRes.json());
 
-      // Step 2: Upload each chunk
-      for (let i = 0; i < totalChunks; i++) {
-        const start = i * CHUNK_SIZE;
-        const end = Math.min(start + CHUNK_SIZE, file.size);
-        const chunk = file.slice(start, end);
-        const fd = new FormData();
-        fd.append('uploadId', uploadId);
-        fd.append('key', key);
-        fd.append('partNumber', String(i + 1));
-        fd.append('chunk', chunk, 'chunk');
+      try {
+        // Step 2: Upload each chunk. Chunks are sequential to keep memory use low.
+        for (let i = 0; i < totalChunks; i++) {
+          const start = i * CHUNK_SIZE;
+          const end = Math.min(start + CHUNK_SIZE, file.size);
+          const chunk = file.slice(start, end);
+          const fd = new FormData();
+          fd.append('uploadId', uploadId);
+          fd.append('key', key);
+          fd.append('partNumber', String(i + 1));
+          fd.append('chunk', chunk, 'chunk');
 
-        const partRes = await fetch(window.location.pathname + '?action=multipartPart', {
-          method: 'POST', headers: { 'x-password': password }, body: fd
+          const partRes = await fetch(window.location.pathname + '?action=multipartPart', {
+            method: 'POST', headers: { 'x-password': password }, body: fd
+          });
+          if (!partRes.ok) throw new Error(await partRes.text() || 'Failed to upload part ' + (i + 1));
+          const partData = await partRes.json();
+          parts.push({ partNumber: partData.partNumber, etag: partData.etag });
+
+          const pct = Math.round(((i + 1) / totalChunks) * 100);
+          progressBar.style.width = pct + '%';
+          progressText.textContent = 'Chunk ' + (i + 1) + '/' + totalChunks;
+        }
+
+        parts.sort((a, b) => a.partNumber - b.partNumber);
+        const completeRes = await fetch(window.location.pathname + '?action=multipartComplete', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'x-password': password },
+          body: JSON.stringify({ key, uploadId, parts })
         });
-        if (!partRes.ok) throw new Error('Failed to upload part ' + (i + 1));
-        const partData = await partRes.json();
-        parts.push({ partNumber: partData.partNumber, etag: partData.etag });
-
-        // Update progress
-        const pct = Math.round(((i + 1) / totalChunks) * 100);
-        progressBar.style.width = pct + '%';
-        progressText.textContent = 'Chunk ' + (i + 1) + '/' + totalChunks;
+        if (!completeRes.ok) throw new Error(await completeRes.text() || 'Failed to complete upload');
+      } catch (error) {
+        // Do not leave abandoned multipart uploads behind when a chunk fails.
+        await fetch(window.location.pathname + '?action=multipartAbort', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'x-password': password },
+          body: JSON.stringify({ key, uploadId })
+        }).catch(() => {});
+        throw error;
       }
-
-      // Step 3: Complete multipart upload
-      parts.sort((a, b) => a.partNumber - b.partNumber);
-      const completeRes = await fetch(window.location.pathname + '?action=multipartComplete', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-password': password },
-        body: JSON.stringify({ key, uploadId, parts })
-      });
-      if (!completeRes.ok) throw new Error('Failed to complete upload');
     }
 
     async function uploadNext(index) {
@@ -1873,8 +1952,31 @@ document.addEventListener("keydown", (e) => {
     }
 
     // === FILE SERVING ===
-    const key = decodeURIComponent(path.slice(1));
-    const obj = await getObject(bucket, key);
+    let key;
+    try { key = decodeURIComponent(path.slice(1)); }
+    catch (e) { return new Response("Invalid path", { status: 400, headers: corsHeaders() }); }
+
+    // R2 supports ranged reads; use them instead of merely advertising range
+    // support so large downloads can resume and media players can seek.
+    const requestedRange = request.headers.get("range");
+    let range = null;
+    let objectSize = null;
+    let obj;
+    if (requestedRange && !key.endsWith(LINK_EXTENSION)) {
+      const head = await headObject(bucket, key);
+      if (head) {
+        objectSize = head.size;
+        range = parseSingleByteRange(requestedRange, objectSize);
+        if (range?.invalid) {
+          return new Response(null, {
+            status: 416,
+            headers: { ...corsHeaders(), "content-range": `bytes */${objectSize}` }
+          });
+        }
+        obj = await getObject(bucket, key, { range: { offset: range.offset, length: range.length } });
+      }
+    }
+    if (!obj) obj = await getObject(bucket, key);
     
     if (obj) {
       // Handle .link files - redirect to the stored URL
@@ -1910,7 +2012,7 @@ document.addEventListener("keydown", (e) => {
       const headers = {
         ...corsHeaders(),
         "content-type": obj.httpMetadata?.contentType || "application/octet-stream",
-        "content-length": obj.size,
+        "content-length": range ? range.length : obj.size,
         "cache-control": `public, max-age=${FILE_CACHE_MAX_AGE}`,
         "etag": obj.httpEtag || "",
         "accept-ranges": "bytes"
@@ -1918,10 +2020,11 @@ document.addEventListener("keydown", (e) => {
       
       if (isDownload) {
         const filename = key.split("/").pop();
-        headers["content-disposition"] = `attachment; filename="${filename}"`;
+        headers["content-disposition"] = `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`;
       }
+      if (range) headers["content-range"] = `bytes ${range.offset}-${range.end}/${objectSize}`;
       
-      return new Response(obj.body, { headers });
+      return new Response(obj.body, { status: range ? 206 : 200, headers });
     }
 
     // Folder without slash? Redirect

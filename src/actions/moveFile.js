@@ -1,10 +1,11 @@
-import { objectExists, getObject, putObject, deleteObjects } from '../r2.js';
+import { objectExists, getObject, putObject, deleteObjects, copyMetadata } from '../r2.js';
+import { isSafeFolderPrefix, isSafeObjectKey } from '../utils.js';
 
 export async function handleMoveFile({ bucket, data }) {
   const sourceKey = data.key;
   const destFolder = data.destFolder || "";
-  if (!sourceKey) return new Response("No source key", { status: 400 });
-  if (destFolder.includes("..")) return new Response("Invalid destination", { status: 400 });
+  if (!isSafeObjectKey(sourceKey)) return new Response("Invalid source key", { status: 400 });
+  if (!isSafeFolderPrefix(destFolder)) return new Response("Invalid destination", { status: 400 });
 
   const obj = await getObject(bucket, sourceKey);
   if (!obj) return new Response("Source not found", { status: 404 });
@@ -22,10 +23,8 @@ export async function handleMoveFile({ bucket, data }) {
     return new Response("Destination already exists", { status: 409 });
   }
 
-  const arrayBuffer = await obj.arrayBuffer();
   const ct = obj.httpMetadata?.contentType || "application/octet-stream";
-
-  await putObject(bucket, destKey, arrayBuffer, ct);
+  await putObject(bucket, destKey, obj.body, ct, copyMetadata(obj));
   await deleteObjects(bucket, sourceKey);
 
   return new Response(JSON.stringify({ ok: true, destKey }), {

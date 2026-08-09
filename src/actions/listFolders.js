@@ -1,4 +1,5 @@
 import { listObjects } from '../r2.js';
+import { MAX_FOLDER_CHOICES } from '../config.js';
 
 export async function handleListFolders({ bucket }) {
   const folders = [{ path: "", display: "/ (Root)" }];
@@ -15,18 +16,22 @@ export async function handleListFolders({ bucket }) {
     return out;
   }
 
-  async function listRecursive(prefix) {
-    const prefixes = await collectPrefixes(prefix);
-    for (const p of prefixes) {
-      folders.push({ path: p, display: "/" + p });
-      await listRecursive(p);
+  // An iterative traversal avoids a call-stack overflow on deeply nested paths.
+  const pending = [""];
+  try {
+    while (pending.length) {
+      const parent = pending.shift();
+      const prefixes = await collectPrefixes(parent);
+      for (const p of prefixes) {
+        if (folders.length >= MAX_FOLDER_CHOICES) {
+          return new Response(`Too many folders to display (limit: ${MAX_FOLDER_CHOICES})`, { status: 413 });
+        }
+        folders.push({ path: p, display: "/" + p });
+        pending.push(p);
+      }
     }
-  }
-
-  const rootPrefixes = await collectPrefixes("");
-  for (const p of rootPrefixes) {
-    folders.push({ path: p, display: "/" + p });
-    await listRecursive(p);
+  } catch (error) {
+    return new Response("Failed to list folders", { status: 500 });
   }
 
   return new Response(JSON.stringify({ ok: true, folders }), {

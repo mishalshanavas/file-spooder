@@ -9,6 +9,10 @@ export const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024;
 // Storage visualization max (10 GB)
 export const MAX_STORAGE_DISPLAY = 10 * 1024 * 1024 * 1024;
 
+// Bound expensive management views so they remain reliable as the bucket grows.
+export const MAX_STORAGE_SCAN_OBJECTS = 10_000;
+export const MAX_FOLDER_CHOICES = 5_000;
+
 // File extension categories for icon display
 export const IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'];
 export const VIDEO_EXTS = ['mp4', 'webm', 'mov', 'avi', 'mkv'];
