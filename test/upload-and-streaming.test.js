@@ -28,7 +28,7 @@ test('multipart part requests retain their FormData body', async () => {
     method: 'POST', headers: { 'x-password': 'secret' }, body: form
   });
 
-  const response = await worker.fetch(request, { R2_BUCKET: bucket, ADMIN_PASSWORD: 'secret' });
+  const response = await worker.fetch(request, { R2_BUCKET: bucket, ADMIN_PASSWORD: 'secret', ADMIN_LIMITER: { async limit() { return { success: true }; } } });
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { ok: true, partNumber: 1, etag: 'etag-1' });
   assert.deepEqual(uploaded, [{ partNumber: 1, text: 'chunk data' }]);
@@ -49,7 +49,7 @@ test('multipart start derives a safe decoded key from the current folder', async
     body: JSON.stringify({ name: 'big file.bin', size: 100, contentType: 'application/octet-stream' })
   });
 
-  const response = await worker.fetch(request, { R2_BUCKET: bucket, ADMIN_PASSWORD: 'secret' });
+  const response = await worker.fetch(request, { R2_BUCKET: bucket, ADMIN_PASSWORD: 'secret', ADMIN_LIMITER: { async limit() { return { success: true }; } } });
   assert.equal(response.status, 200);
   assert.deepEqual(created, {
     key: 'folder name/big file.bin',

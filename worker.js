@@ -52,6 +52,26 @@ function keyMatchesCurrentFolder(path, key) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    // Never accept credentials over an unencrypted transport.
+    if (url.protocol !== 'https:') {
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        return new Response('HTTPS required', { status: 403 });
+      }
+      url.protocol = 'https:';
+      return Response.redirect(url.toString(), 308);
+    }
+    if (request.method === 'POST') {
+      const authError = requireAuth(request, env);
+      const limiter = authError ? env.AUTH_FAILURE_LIMITER : env.ADMIN_LIMITER;
+      if (!limiter) return new Response('Authentication protection unavailable', { status: 503 });
+      try {
+        const { success } = await limiter.limit({ key: request.headers.get('CF-Connecting-IP') || 'unknown' });
+        if (!success) return new Response('Too many requests', { status: 429, headers: { 'retry-after': '60', 'cache-control': 'no-store' } });
+      } catch {
+        return new Response('Authentication protection unavailable', { status: 503 });
+      }
+      if (authError) return authError;
+    }
     let path = url.pathname;
     if (!path.startsWith("/")) path = "/" + path;
 
@@ -527,18 +547,12 @@ window.addEventListener('load', () => {
 // Load storage on page load
 loadStorageUsage();
 
-// Password caching using sessionStorage
-function getCachedPassword() {
-  return sessionStorage.getItem('fileManagerPassword');
-}
-
-function setCachedPassword(password) {
-  sessionStorage.setItem('fileManagerPassword', password);
-}
-
-function clearCachedPassword() {
-  sessionStorage.removeItem('fileManagerPassword');
-}
+// Keep the credential only in this page's memory; remove legacy persisted copies.
+sessionStorage.removeItem('fileManagerPassword');
+let cachedPassword = null;
+function getCachedPassword() { return cachedPassword; }
+function setCachedPassword(password) { cachedPassword = password; }
+function clearCachedPassword() { cachedPassword = null; }
 
 // Toast notification helper
 function showToast(message, type = 'info') {
@@ -1947,7 +1961,7 @@ document.addEventListener("keydown", (e) => {
 </html>`;
 
       return new Response(html, { 
-        headers: { ...corsHeaders(), "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" } 
+        headers: { ...corsHeaders(), "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "x-frame-options": "DENY", "referrer-policy": "no-referrer", "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'" }
       });
     }
 
@@ -1994,7 +2008,9 @@ document.addEventListener("keydown", (e) => {
         }
       }
       
-      const isDownload = url.searchParams.get("download") === "1";
+      const contentType = obj.httpMetadata?.contentType || 'application/octet-stream';
+      const safeInline = /^(?:image\/(?:png|jpeg|gif|webp|avif|bmp|x-icon)|video\/[a-z0-9.+-]+|audio\/[a-z0-9.+-]+|text\/plain|application\/pdf)(?:;|$)/i.test(contentType);
+      const isDownload = url.searchParams.get("download") === "1" || !safeInline;
 
       // Handle conditional requests (304 Not Modified)
       const ifNoneMatch = request.headers.get("If-None-Match");
@@ -2011,7 +2027,10 @@ document.addEventListener("keydown", (e) => {
 
       const headers = {
         ...corsHeaders(),
-        "content-type": obj.httpMetadata?.contentType || "application/octet-stream",
+        "content-type": contentType,
+        "x-content-type-options": "nosniff",
+        "content-security-policy": "sandbox; default-src 'none'; base-uri 'none'",
+        "referrer-policy": "no-referrer",
         "content-length": range ? range.length : obj.size,
         "cache-control": `public, max-age=${FILE_CACHE_MAX_AGE}`,
         "etag": obj.httpEtag || "",
