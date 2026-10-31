@@ -16,6 +16,7 @@ bucket_name = "public-files"
 [observability]
 enabled = true
 head_sampling_rate = 0.1
+redact_query_string = true
 
 [[ratelimits]]
 name = "AUTH_FAILURE_LIMITER"
